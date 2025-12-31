@@ -17,10 +17,10 @@ typedef struct Node {
     NODE_STRING,
     NODE_ONEOF,
     NODE_RANGE,
-    NODE_SEQ,
     NODE_SOME,
     NODE_MANY,
     NODE_OPT,
+    NODE_SEQ,
     NODE_ALT,
     NODE_NOT,
     NODE_TRY,
@@ -35,10 +35,10 @@ typedef struct Node {
     struct { char *str; } string;
     struct { char *chars; } oneof;
     struct { char from, to; } range;
-    struct { struct Node **nodes; } seq;
     struct { struct Node *node; } some;
     struct { struct Node *node; } many;
     struct { struct Node *node; } opt;
+    struct { struct Node **nodes; } seq;
     struct { struct Node **nodes; } alt;
     struct { struct Node *node; } not;
     struct { struct Node *node; } try;
@@ -53,10 +53,10 @@ typedef struct Node {
 #define STR(s)             (&(Node){ .type = NODE_STRING, .data.string = { s } })
 #define ONEOF(chars)       (&(Node){ .type = NODE_ONEOF, .data.oneof = { chars } })
 #define RANGE(from, to)    (&(Node){ .type = NODE_RANGE, .data.range = { from, to } })
-#define SEQ(...)           (&(Node){ .type = NODE_SEQ, .data.seq = { (Node**)&(Node*[]){ __VA_ARGS__, nullptr } } })
 #define SOME(n)            (&(Node){ .type = NODE_SOME, .data.some = { n } })
 #define MANY(n)            (&(Node){ .type = NODE_MANY, .data.many = { n } })
 #define OPT(n)             (&(Node){ .type = NODE_OPT, .data.opt = { n } })
+#define SEQ(...)           (&(Node){ .type = NODE_SEQ, .data.seq = { (Node**)&(Node*[]){ __VA_ARGS__, nullptr } } })
 #define ALT(...)           (&(Node){ .type = NODE_ALT, .data.alt = { (Node**)&(Node*[]){ __VA_ARGS__, nullptr } } })
 #define NOT(n)             (&(Node){ .type = NODE_NOT, .data.not = { n } })
 #define TRY(n)             (&(Node){ .type = NODE_TRY, .data.try = { n } })
@@ -128,26 +128,6 @@ Match_Result match_range(Node *node, Match_State state) {
   return (Match_Result){ .status = EMPTY_ERROR, .state = state };
 }
 
-Match_Result match_seq(Node *node, Match_State state) {
-  assert(node->data.seq.nodes != nullptr);
-
-  auto res = (Match_Result){ .status = EMPTY_OK, .state = state };
-
-  for (auto n = node->data.seq.nodes; *n != nullptr; n++) {
-    res = match_rec(*n, res.state);
-    switch (res.status) {
-      case CONSUMED_OK:
-      case EMPTY_OK:
-        continue;
-      case CONSUMED_ERROR:
-      case EMPTY_ERROR:
-        return res;
-    }
-  }
-
-  return res;
-}
-
 Match_Result match_many(Node *node, Match_State state) {
   assert(node->data.many.node != nullptr);
 
@@ -195,6 +175,26 @@ Match_Result match_opt(Node *node, Match_State state) {
     case EMPTY_ERROR:
       return (Match_Result){ .status = EMPTY_OK, .state = state };
   }
+}
+
+Match_Result match_seq(Node *node, Match_State state) {
+  assert(node->data.seq.nodes != nullptr);
+
+  auto res = (Match_Result){ .status = EMPTY_OK, .state = state };
+
+  for (auto n = node->data.seq.nodes; *n != nullptr; n++) {
+    res = match_rec(*n, res.state);
+    switch (res.status) {
+      case CONSUMED_OK:
+      case EMPTY_OK:
+        continue;
+      case CONSUMED_ERROR:
+      case EMPTY_ERROR:
+        return res;
+    }
+  }
+
+  return res;
 }
 
 Match_Result match_alt(Node *node, Match_State state) {
@@ -287,14 +287,14 @@ Match_Result match_rec(Node *node, Match_State state) {
       return match_oneof(node, state);
     case NODE_RANGE:
       return match_range(node, state);
-    case NODE_SEQ:
-      return match_seq(node, state);
     case NODE_SOME:
       return match_some(node, state);
     case NODE_MANY:
       return match_many(node, state);
     case NODE_OPT:
       return match_opt(node, state);
+    case NODE_SEQ:
+      return match_seq(node, state);
     case NODE_ALT:
       return match_alt(node, state);
     case NODE_NOT:
