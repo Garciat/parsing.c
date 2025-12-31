@@ -31,6 +31,7 @@ typedef struct Node {
     NODE_OPT,
     NODE_ALT,
     NODE_NOT,
+    NODE_TRY,
 
     NODE_CAPTURE,
 
@@ -48,6 +49,7 @@ typedef struct Node {
     struct { struct Node *node; } opt;
     struct { struct Node **nodes; } alt;
     struct { struct Node *node; } not;
+    struct { struct Node *node; } try;
     struct { struct Node *node; String_View *output; } capture;
     // struct { } begin;
     // struct { } end;
@@ -65,6 +67,7 @@ typedef struct Node {
 #define OPT(n)             (&(Node){ .type = NODE_OPT, .data.opt = { n } })
 #define ALT(...)           (&(Node){ .type = NODE_ALT, .data.alt = { (Node**)&(Node*[]){ __VA_ARGS__, nullptr } } })
 #define NOT(n)             (&(Node){ .type = NODE_NOT, .data.not = { n } })
+#define TRY(n)             (&(Node){ .type = NODE_TRY, .data.try = { n } })
 #define CAPTURE(output, n) (&(Node){ .type = NODE_CAPTURE, .data.capture = { n, output } })
 
 typedef struct {
@@ -239,6 +242,20 @@ Match_Result match_not(Node *node, Match_State state) {
   }
 }
 
+Match_Result match_try(Node *node, Match_State state) {
+  assert(node->data.try.node != nullptr);
+
+  auto res = match_rec(node->data.try.node, state);
+  switch (res.status) {
+    case CONSUMED_OK:
+    case EMPTY_OK:
+      return res;
+    case CONSUMED_ERROR:
+    case EMPTY_ERROR:
+      return (Match_Result){ .status = EMPTY_ERROR, .state = state };
+  }
+}
+
 Match_Result match_capture(Node *node, Match_State state) {
   assert(node->data.capture.node != nullptr);
   assert(node->data.capture.output != nullptr);
@@ -292,6 +309,8 @@ Match_Result match_rec(Node *node, Match_State state) {
       return match_alt(node, state);
     case NODE_NOT:
       return match_not(node, state);
+    case NODE_TRY:
+      return match_try(node, state);
     case NODE_CAPTURE:
       return match_capture(node, state);
     case NODE_BEGIN:
@@ -380,6 +399,9 @@ int main() {
   assert(!match_cstr(SEQ(BEGIN(), STR("start"), END()), "notstart"));
   assert(match_cstr(NOT(STR("fail")), "success"));
   assert(!match_cstr(NOT(STR("fail")), "fail"));
+
+  assert(!match_cstr(ALT(STR("help"), STR("hello")), "hello"));
+  assert(match_cstr(ALT(TRY(STR("help")), STR("hello")), "hello"));
 
   {
     URL_Match url;
