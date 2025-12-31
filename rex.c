@@ -68,9 +68,7 @@ typedef struct {
 } Match_State;
 
 Match_State state_advance(Match_State state, size_t n) {
-  if (state.position + n > state.sv.size) {
-    n = state.sv.size - state.position;
-  }
+  assert(state.position + n <= state.sv.size);
   return (Match_State){ .sv = state.sv, .position = state.position + n };
 }
 
