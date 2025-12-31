@@ -3,8 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 
-struct Node;
-
 typedef struct {
   const char *data;
   size_t size;
