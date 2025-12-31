@@ -81,142 +81,195 @@ Match_State state_advance(Match_State state, size_t n) {
 
 typedef struct {
   enum {
-    MATCH_FAIL,
-    MATCH_SUCCESS
+    CONSUMED_OK,
+    CONSUMED_ERROR,
+    EMPTY_OK,
+    EMPTY_ERROR
   } status;
-  union {
-    Match_State state;
-    Node *expected;
-  };
+  Match_State state;
 } Match_Result;
-
-Match_Result match_success(Match_State next) {
-  return (Match_Result){ .status = MATCH_SUCCESS, .state = next };
-}
-
-Match_Result match_fail(Node *expected) {
-  return (Match_Result){ .status = MATCH_FAIL, .expected = expected };
-}
 
 Match_Result match_rec(Node *node, Match_State state);
 
+// Consumes prefix on failure
 Match_Result match_string(Node *node, Match_State state) {
-  auto len = strlen(node->data.string.str);
-  if (state.position + len <= state.sv.size &&
-      strncmp(state.sv.data + state.position, node->data.string.str, len) == 0) {
-    return match_success(state_advance(state, len));
+  assert(node->data.string.str != nullptr);
+
+  size_t i = 0;
+  for (; node->data.string.str[i] && state.position + i < state.sv.size; i++) {
+    if (state.sv.data[state.position + i] != node->data.string.str[i]) {
+      break;
+    }
   }
-  return match_fail(node);
+
+  if (node->data.string.str[i] == '\0') {
+    return (Match_Result){ .status = CONSUMED_OK, .state = state_advance(state, i) };
+  } else if (i == 0) {
+    return (Match_Result){ .status = EMPTY_ERROR, .state = state };
+  } else {
+    return (Match_Result){ .status = CONSUMED_ERROR, .state = state_advance(state, i) };
+  }
 }
 
 Match_Result match_oneof(Node *node, Match_State state) {
-  if (state.position < state.sv.size &&
-      strchr(node->data.oneof.chars, state.sv.data[state.position])) {
-    return match_success(state_advance(state, 1));
+  assert(node->data.oneof.chars != nullptr);
+
+  if (state.position < state.sv.size) {
+    for (char *c = node->data.oneof.chars; *c != '\0'; c++) {
+      if (state.sv.data[state.position] == *c) {
+        return (Match_Result){ .status = CONSUMED_OK, .state = state_advance(state, 1) };
+      }
+    }
   }
-  return match_fail(node);
+  return (Match_Result){ .status = EMPTY_ERROR, .state = state };
 }
 
 Match_Result match_range(Node *node, Match_State state) {
+  assert(node->data.range.from <= node->data.range.to);
+
   if (state.position < state.sv.size &&
       state.sv.data[state.position] >= node->data.range.from &&
       state.sv.data[state.position] <= node->data.range.to) {
-    return match_success(state_advance(state, 1));
+    return (Match_Result){ .status = CONSUMED_OK, .state = state_advance(state, 1) };
   }
-  return match_fail(node);
+  return (Match_Result){ .status = EMPTY_ERROR, .state = state };
 }
 
 Match_Result match_seq(Node *node, Match_State state) {
+  assert(node->data.seq.nodes != nullptr);
+
+  auto res = (Match_Result){ .status = EMPTY_OK, .state = state };
+
   for (auto n = node->data.seq.nodes; *n != nullptr; n++) {
-    auto res = match_rec(*n, state);
-    if (res.status == MATCH_FAIL) {
-      return res;
-    }
-    state = res.state;
-  }
-  return match_success(state);
-}
-
-Match_Result match_some(Node *node, Match_State state) {
-  auto res = match_rec(node->data.some.node, state);
-  if (res.status == MATCH_FAIL) {
-    return res;
-  }
-  state = res.state;
-
-  while (true) {
-    res = match_rec(node->data.some.node, state);
-    if (res.status == MATCH_FAIL) {
-      break;
-    }
-    state = res.state;
-  }
-  return match_success(state);
-}
-
-Match_Result match_many(Node *node, Match_State state) {
-  while (true) {
-    auto res = match_rec(node->data.many.node, state);
-    if (res.status == MATCH_FAIL) {
-      break;
-    }
-    state = res.state;
-  }
-  return match_success(state);
-}
-
-Match_Result match_opt(Node *node, Match_State state) {
-  auto res = match_rec(node->data.opt.node, state);
-  if (res.status == MATCH_SUCCESS) {
-    return res;
-  }
-  return match_success(state);
-}
-
-Match_Result match_alt(Node *node, Match_State state) {
-  for (auto n = node->data.alt.nodes; *n != nullptr; n++) {
-    auto res = match_rec(*n, state);
-    if (res.status == MATCH_SUCCESS) {
-      return res;
+    res = match_rec(*n, res.state);
+    switch (res.status) {
+      case CONSUMED_OK:
+      case EMPTY_OK:
+        continue;
+      case CONSUMED_ERROR:
+      case EMPTY_ERROR:
+        return res;
     }
   }
-  return match_fail(node);
-}
 
-Match_Result match_not(Node *node, Match_State state) {
-  auto res = match_rec(node->data.not.node, state);
-  if (res.status == MATCH_FAIL) {
-    return match_success(state);
-  }
-  return match_fail(node);
-}
-
-Match_Result match_capture(Node *node, Match_State state) {
-  auto res = match_rec(node->data.capture.node, state);
-  if (res.status == MATCH_SUCCESS) {
-    auto start = state.position;
-    auto end = res.state.position;
-    *(node->data.capture.output) = (String_View){
-      .data = state.sv.data + start,
-      .size = end - start
-    };
-    return res;
-  }
   return res;
 }
 
-Match_Result match_begin(Node *node, Match_State state) {
-  if (state.position == 0) {
-    return match_success(state);
+Match_Result match_many(Node *node, Match_State state) {
+  assert(node->data.many.node != nullptr);
+
+  auto res = (Match_Result){ .status = EMPTY_OK, .state = state };
+
+  while (true) {
+    res = match_rec(node->data.many.node, res.state);
+    switch (res.status) {
+      case CONSUMED_OK:
+      case EMPTY_OK:
+        continue;
+      case CONSUMED_ERROR:
+        return res;
+      case EMPTY_ERROR:
+        return (Match_Result){ .status = EMPTY_OK, .state = res.state };
+    }
   }
-  return match_fail(node);
 }
 
-Match_Result match_end(Node *node, Match_State state) {
-  if (state.position == state.sv.size) {
-    return match_success(state);
+Match_Result match_some(Node *node, Match_State state) {
+  assert(node->data.some.node != nullptr);
+
+  auto res = match_rec(node->data.some.node, state);
+  switch (res.status) {
+    case CONSUMED_OK:
+    case EMPTY_OK:
+      break;
+    case CONSUMED_ERROR:
+    case EMPTY_ERROR:
+      return res;
   }
-  return match_fail(node);
+
+  return match_many(node, res.state);
+}
+
+Match_Result match_opt(Node *node, Match_State state) {
+  assert(node->data.opt.node != nullptr);
+
+  auto res = match_rec(node->data.opt.node, state);
+  switch (res.status) {
+    case CONSUMED_OK:
+    case EMPTY_OK:
+    case CONSUMED_ERROR:
+      return res;
+    case EMPTY_ERROR:
+      return (Match_Result){ .status = EMPTY_OK, .state = state };
+  }
+}
+
+Match_Result match_alt(Node *node, Match_State state) {
+  assert(node->data.alt.nodes != nullptr);
+
+  for (auto n = node->data.alt.nodes; *n != nullptr; n++) {
+    auto res = match_rec(*n, state);
+    switch (res.status) {
+      case CONSUMED_OK:
+      case EMPTY_OK:
+        return res;
+      case CONSUMED_ERROR:
+        return res;
+      case EMPTY_ERROR:
+        continue;
+    }
+  }
+
+  return (Match_Result){ .status = EMPTY_ERROR, .state = state };
+}
+
+Match_Result match_not(Node *node, Match_State state) {
+  assert(node->data.not.node != nullptr);
+
+  auto res = match_rec(node->data.not.node, state);
+  switch (res.status) {
+    case CONSUMED_OK:
+      return (Match_Result){ .status = CONSUMED_ERROR, .state = state };
+    case EMPTY_OK:
+      return (Match_Result){ .status = EMPTY_ERROR, .state = state };
+    case CONSUMED_ERROR:
+      return (Match_Result){ .status = CONSUMED_OK, .state = state };
+    case EMPTY_ERROR:
+      return (Match_Result){ .status = EMPTY_OK, .state = state };
+  }
+}
+
+Match_Result match_capture(Node *node, Match_State state) {
+  assert(node->data.capture.node != nullptr);
+  assert(node->data.capture.output != nullptr);
+
+  auto res = match_rec(node->data.capture.node, state);
+  switch (res.status) {
+    case CONSUMED_OK:
+    case EMPTY_OK:
+      *(node->data.capture.output) = (String_View){
+        .data = state.sv.data + state.position,
+        .size = res.state.position - state.position
+      };
+      return res;
+    case CONSUMED_ERROR:
+    case EMPTY_ERROR:
+      return res;
+  }
+}
+
+Match_Result match_begin(Node *, Match_State state) {
+  if (state.position == 0) {
+    return (Match_Result){ .status = EMPTY_OK, .state = state };
+  }
+  return (Match_Result){ .status = EMPTY_ERROR, .state = state };
+}
+
+Match_Result match_end(Node *, Match_State state) {
+  if (state.position == state.sv.size) {
+    return (Match_Result){ .status = EMPTY_OK, .state = state };
+  }
+  return (Match_Result){ .status = EMPTY_ERROR, .state = state };
 }
 
 Match_Result match_rec(Node *node, Match_State state) {
@@ -251,7 +304,15 @@ Match_Result match_rec(Node *node, Match_State state) {
 }
 
 bool match(Node *pattern, String_View input) {
-  return match_rec(pattern, (Match_State){ .sv = input, .position = 0 }).status == MATCH_SUCCESS;
+  auto res = match_rec(pattern, (Match_State){ .sv = input, .position = 0 });
+  switch (res.status) {
+    case CONSUMED_OK:
+    case EMPTY_OK:
+      return true;
+    case CONSUMED_ERROR:
+    case EMPTY_ERROR:
+      return false;
+  }
 }
 
 bool match_cstr(Node *pattern, const char *input) {
