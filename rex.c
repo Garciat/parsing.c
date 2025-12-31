@@ -8,14 +8,6 @@ typedef struct {
   size_t size;
 } String_View;
 
-String_View sv_empty() {
-  return (String_View){ .data=nullptr, .size=0 };
-}
-
-bool sv_is_empty(String_View sv) {
-  return sv.size == 0;
-}
-
 String_View sv_from_cstr(const char *cstr) {
   return (String_View){ .data=cstr, .size=strlen(cstr) };
 }
