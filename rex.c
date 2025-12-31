@@ -260,24 +260,12 @@ bool match_cstr(Node *pattern, const char *input) {
   return match(pattern, sv_from_cstr(input));
 }
 
-int main() {
-  assert(match_cstr(STR("hello"), "hello"));
-  assert(!match_cstr(STR("hello"), "hell"));
-  assert(match_cstr(SEQ(STR("he"), STR("llo")), "hello"));
-  assert(match_cstr(SOME(RANGE('a', 'z')), "abcxyz"));
-  assert(!match_cstr(SOME(RANGE('a', 'z')), "123"));
-  assert(match_cstr(OPT(STR("hello")), "hello"));
-  assert(match_cstr(OPT(STR("hello")), ""));
-  assert(match_cstr(ALT(STR("cat"), STR("dog")), "dog"));
-  assert(!match_cstr(ALT(STR("cat"), STR("dog")), "mouse"));
-  assert(match_cstr(SEQ(BEGIN(), STR("start"), END()), "start"));
-  assert(!match_cstr(SEQ(BEGIN(), STR("start"), END()), "notstart"));
-  assert(match_cstr(NOT(STR("fail")), "success"));
-  assert(!match_cstr(NOT(STR("fail")), "fail"));
+typedef struct {
+  String_View domain;
+  String_View path;
+} URL_Match;
 
-  auto domain = sv_empty();
-  auto path = sv_empty();
-
+bool match_url(const char *input, URL_Match *out) {
   auto domain_char = ALT(
     RANGE('a', 'z'),
     RANGE('A', 'Z'),
@@ -298,7 +286,7 @@ int main() {
     OPT(STR("s")),
     STR("://"),
     CAPTURE(
-      &domain,
+      &out->domain,
       SEQ(
         OPT(SEQ(SOME(domain_char), STR("."))),
         SOME(domain_char),
@@ -310,20 +298,35 @@ int main() {
       )
     ),
     CAPTURE(
-      &path,
+      &out->path,
       MANY(SEQ(STR("/"), MANY(path_char)))
     ),
     END()
   );
 
-  auto input = "https://www.1example.com/path/to-resource";
-  auto result = match(pat, sv_from_cstr(input));
+  return match(pat, sv_from_cstr(input));
+}
 
-  printf("Input: %s\n", input);
-  printf("Match: %s\n", result ? "Yes" : "No");
-  if (result) {
-    printf("Captured domain: %.*s\n", (int)domain.size, domain.data);
-    printf("Captured path: %.*s\n", (int)path.size, path.data);
+int main() {
+  assert(match_cstr(STR("hello"), "hello"));
+  assert(!match_cstr(STR("hello"), "hell"));
+  assert(match_cstr(SEQ(STR("he"), STR("llo")), "hello"));
+  assert(match_cstr(SOME(RANGE('a', 'z')), "abcxyz"));
+  assert(!match_cstr(SOME(RANGE('a', 'z')), "123"));
+  assert(match_cstr(OPT(STR("hello")), "hello"));
+  assert(match_cstr(OPT(STR("hello")), ""));
+  assert(match_cstr(ALT(STR("cat"), STR("dog")), "dog"));
+  assert(!match_cstr(ALT(STR("cat"), STR("dog")), "mouse"));
+  assert(match_cstr(SEQ(BEGIN(), STR("start"), END()), "start"));
+  assert(!match_cstr(SEQ(BEGIN(), STR("start"), END()), "notstart"));
+  assert(match_cstr(NOT(STR("fail")), "success"));
+  assert(!match_cstr(NOT(STR("fail")), "fail"));
+
+  {
+    URL_Match url;
+    assert(match_url("https://www.example.com/path/to/resource", &url));
+    assert(strncmp(url.domain.data, "www.example.com", url.domain.size) == 0);
+    assert(strncmp(url.path.data, "/path/to/resource", url.path.size) == 0);
   }
 
   return 0;
