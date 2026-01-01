@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define ALWAYS_INLINE __attribute__((always_inline))
 
@@ -67,6 +68,7 @@ typedef struct Parser {
     PARSER_CONST,
     PARSER_SEQ,
     PARSER_ALT,
+    PARSER_ARRAY,
   } kind;
   union {
     struct { size_t count; } skip;
@@ -76,6 +78,7 @@ typedef struct Parser {
     struct {
       struct Parser *parser;
       void *output;
+      size_t size;
     } capture;
     struct {
       struct Parser *parser;
@@ -87,6 +90,7 @@ typedef struct Parser {
     } constant;
     struct { struct Parser **parsers; } seq;
     struct { struct Parser **parsers; } alt;
+    struct { struct Parser *parser; size_t count; } array;
   };
 } Parser;
 
@@ -99,7 +103,8 @@ typedef struct Parser {
 
 #define SKIP(n) (&(Parser){ .kind = PARSER_SKIP, .skip = { .count = n } })
 
-#define CAPTURE(o, p) (&(Parser){ .kind = PARSER_CAPTURE, .capture = { .parser = p, .output = o } })
+#define CAPTURE(o, p) (&(Parser){ .kind = PARSER_CAPTURE, .capture = { .parser = p, .output = o, .size = sizeof(*(o)) } })
+#define CAPTURE_ARRAY(o, p) (&(Parser){ .kind = PARSER_CAPTURE, .capture = { .parser = p, .output = o, .size = sizeof(o) } })
 
 #define CONST_U2(value, p) (&(Parser){ .kind = PARSER_CONST, .constant = { .u2 = value, .parser = p } })
 #define CONST_U4(value, p) (&(Parser){ .kind = PARSER_CONST, .constant = { .u4 = value, .parser = p } })
@@ -107,6 +112,7 @@ typedef struct Parser {
 
 #define SEQ(...) (&(Parser){ .kind = PARSER_SEQ, .seq = { (Parser*[]){ __VA_ARGS__, nullptr } } })
 #define ALT(...) (&(Parser){ .kind = PARSER_ALT, .alt = { (Parser*[]){ __VA_ARGS__, nullptr } } })
+#define ARRAY(n, p) (&(Parser){ .kind = PARSER_ARRAY, .array = { .parser = p, .count = n } })
 
 // ==============================================================
 
@@ -250,23 +256,17 @@ ParserResult parse_capture(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_CAPTURE);
   assert(parser->capture.parser != nullptr);
   assert(parser->capture.output != nullptr);
+  assert(parser->capture.size > 0);
 
   auto res = parse_rec(state, parser->capture.parser);
   switch (res.kind) {
     case RESULT_CONSUMED_OK:
-    case RESULT_EMPTY_OK:
-      switch (res.ok.kind) {
-        case RESULT_U2:
-          *(uint16_t*)(parser->capture.output) = res.ok.u2;
-          return res;
-        case RESULT_U4:
-          *(uint32_t*)(parser->capture.output) = res.ok.u4;
-          return res;
-        case RESULT_U8:
-          *(uint64_t*)(parser->capture.output) = res.ok.u8;
-          return res;
-      }
-      assert(0 && "Unsupported capture result type");
+    case RESULT_EMPTY_OK: {
+      auto n = res.state.offset - state.offset;
+      assert(n <= parser->capture.size);
+      memcpy(parser->capture.output, state.data + state.offset, n);
+      return res;
+    }
     case RESULT_CONSUMED_ERROR:
     case RESULT_EMPTY_ERROR:
       return res;
@@ -377,6 +377,38 @@ ParserResult parse_alt(ParserState state, Parser *parser) {
 }
 
 ALWAYS_INLINE
+ParserResult parse_array(ParserState state, Parser *parser) {
+  assert(parser->kind == PARSER_ARRAY);
+  assert(parser->array.parser != nullptr);
+
+  auto res = (ParserResult){ .kind = RESULT_EMPTY_OK, .state = state };
+
+  bool consumed = false;
+
+  for (size_t i = 0; i < parser->array.count; i++) {
+    res = parse_rec(res.state, parser->array.parser);
+    switch (res.kind) {
+      case RESULT_CONSUMED_OK:
+        consumed = true;
+        continue;
+      case RESULT_EMPTY_OK:
+        continue;
+      case RESULT_CONSUMED_ERROR:
+        return res;
+      case RESULT_EMPTY_ERROR:
+        if (consumed) {
+          return result_fail_consumed(res.state, res.error.expected);
+        } else {
+          return res;
+        }
+    }
+    assert(0 && "Unexpected result kind in ARRAY parser");
+  }
+
+  return res;
+}
+
+ALWAYS_INLINE
 ParserResult parse_rec(ParserState state, Parser *parser) {
   switch (parser->kind) {
     case PARSER_SKIP:
@@ -395,6 +427,8 @@ ParserResult parse_rec(ParserState state, Parser *parser) {
       return parse_seq(state, parser);
     case PARSER_ALT:
       return parse_alt(state, parser);
+    case PARSER_ARRAY:
+      return parse_array(state, parser);
   }
   assert(0 && "Unknown parser kind");
 }
@@ -481,6 +515,11 @@ size_t parser_min_size_alt(Parser *parser) {
   return min_size;
 }
 
+size_t parser_min_size_array(Parser *parser) {
+  assert(parser->kind == PARSER_ARRAY);
+  return parser->array.count * parser_min_size(parser->array.parser);
+}
+
 size_t parser_min_size(Parser *parser) {
   switch (parser->kind) {
     case PARSER_SKIP:
@@ -499,6 +538,8 @@ size_t parser_min_size(Parser *parser) {
       return parser_min_size_seq(parser);
     case PARSER_ALT: 
       return parser_min_size_alt(parser);
+    case PARSER_ARRAY:
+      return parser_min_size_array(parser);
   }
   assert(0 && "Unknown parser kind");
 }
@@ -598,6 +639,12 @@ void fmt_parser_alt(String_Builder *sb, Parser *parser) {
   sb_printf(sb, ")");
 }
 
+void fmt_parser_array(String_Builder *sb, Parser *parser) {
+  sb_printf(sb, "ARRAY(%zu, ", parser->array.count);
+  fmt_parser_rec(sb, parser->array.parser);
+  sb_printf(sb, ")");
+}
+
 void fmt_parser_rec(String_Builder *sb, Parser *parser) {
   switch (parser->kind) {
     case PARSER_SKIP:
@@ -616,6 +663,8 @@ void fmt_parser_rec(String_Builder *sb, Parser *parser) {
       return fmt_parser_seq(sb, parser);
     case PARSER_ALT: 
       return fmt_parser_alt(sb, parser);
+    case PARSER_ARRAY:
+      return fmt_parser_array(sb, parser);
   }
   assert(0 && "Unknown parser kind");
 }
@@ -778,6 +827,7 @@ typedef struct {
   COFF_Header coff_header;
   COFF_Standard_Fields standard_fields;
   COFF_Windows_Fields windows_fields;
+  Image_Data_Directory data_directories[16];
 } PE_File;
 
 void print_coff_header(const COFF_Header *header) {
@@ -841,6 +891,23 @@ void print_coff_windows_fields_pe32p(const COFF_Windows_Fields_PE32P *fields) {
   printf("Size of Heap Commit: %llu\n", fields->size_of_heap_commit);
   printf("Loader Flags: %u\n", fields->loader_flags);
   printf("Number of RVA and Sizes: %u\n", fields->number_of_rva_and_sizes);
+}
+
+void print_pe_file(const PE_File *pe_file) {
+  printf("=== COFF Header ===\n");
+  print_coff_header(&pe_file->coff_header);
+  printf("\n=== Standard Fields ===\n");
+  print_coff_standard_fields(&pe_file->standard_fields);
+  printf("\n=== Windows-Specific Fields ===\n");
+  if (pe_file->standard_fields.magic == COFF_MAGIC_PE32) {
+    print_coff_windows_fields_pe32(&pe_file->windows_fields.pe32);
+  } else if (pe_file->standard_fields.magic == COFF_MAGIC_PE32P) {
+    print_coff_windows_fields_pe32p(&pe_file->windows_fields.pe32p);
+  }
+  printf("\n=== Data Directories ===\n");
+  for (size_t i = 0; i < 16; i++) {
+    printf("%zu: RVA = 0x%08X, Size = %u\n", i, pe_file->data_directories[i].virtual_address, pe_file->data_directories[i].size);
+  }
 }
 
 bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error) {
@@ -994,11 +1061,40 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
     return false;
   }
 
+  auto data_directories_count = 0;
+  if (standard_fields.magic == COFF_MAGIC_PE32) {
+    data_directories_count = windows_fields.pe32.number_of_rva_and_sizes;
+  } else if (standard_fields.magic == COFF_MAGIC_PE32P) {
+    data_directories_count = windows_fields.pe32p.number_of_rva_and_sizes;
+  }
+  if (data_directories_count > 16) {
+    sb_printf(out_error, "Too many data directories: %u\n", data_directories_count);
+    return false;
+  }
+
+  Image_Data_Directory data_directories[16] = {0};
+
+  {
+    auto parser = CAPTURE_ARRAY(
+      data_directories,
+      ARRAY(data_directories_count,  SEQ(U4_LE(), U4_LE()))
+    );
+
+    auto res = parser_run(pstate, parser);
+    if (!result_handle(res, out_error)) {
+      return false;
+    }
+
+    pstate = res.state;
+  }
+
   *out_file = (PE_File){
     .coff_header = coff_header,
     .standard_fields = standard_fields,
     .windows_fields = windows_fields,
   };
+
+  memcpy(out_file->data_directories, data_directories, data_directories_count * sizeof(Image_Data_Directory));
 
   return true;
 }
@@ -1020,13 +1116,7 @@ int main() {
     return 1;
   }
   
-  print_coff_header(&pe_file.coff_header);
-  print_coff_standard_fields(&pe_file.standard_fields);
-  if (pe_file.standard_fields.magic == COFF_MAGIC_PE32) {
-    print_coff_windows_fields_pe32(&pe_file.windows_fields.pe32);
-  } else if (pe_file.standard_fields.magic == COFF_MAGIC_PE32P) {
-    print_coff_windows_fields_pe32p(&pe_file.windows_fields.pe32p);
-  }
+  print_pe_file(&pe_file);
 
   return 0;
 }
