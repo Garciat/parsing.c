@@ -401,6 +401,8 @@ bool match_cstr(Node *pattern, const char *input) {
   return match(pattern, sv_from_cstr(input), nullptr);
 }
 
+void fmt_pat(String_Builder *sb, Node *node);
+
 // ==============================================================
 // # URL Matching Example
 // ==============================================================
@@ -668,3 +670,132 @@ void fmt_expect_rec(String_Builder *sb, Match_Expect expect) {
   }
 }
 
+// ==============================================================
+// # Pattern Printing
+// ==============================================================
+
+bool is_special_char(char c) {
+  return c == '.' || c == '*' || c == '+' || c == '?' ||
+         c == '(' || c == ')' || c == '[' || c == ']' ||
+         c == '{' || c == '}' || c == '|' || c == '^' ||
+         c == '$' || c == '\\';
+}
+
+void fmt_pat_rec(String_Builder *sb, Node *node);
+
+void fmt_pat(String_Builder *sb, Node *node) {
+  sb_printf(sb, "^");
+  fmt_pat_rec(sb, node);
+}
+
+void fmt_pat_end(String_Builder *sb, Node *) {
+  sb_printf(sb, "$");
+}
+
+void fmt_pat_any(String_Builder *sb, Node *) {
+  sb_printf(sb, ".");
+}
+
+void fmt_pat_string(String_Builder *sb, Node *node) {
+  for (char *c = node->data.string.str; *c != '\0'; c++) {
+    if (is_special_char(*c)) {
+      sb_printf(sb, "\\%c", *c);
+    } else {
+      sb_printf(sb, "%c", *c);
+    }
+  }
+}
+
+void fmt_pat_oneof(String_Builder *sb, Node *node) {
+  sb_printf(sb, "[%s]", node->data.oneof.chars);
+}
+
+void fmt_pat_range(String_Builder *sb, Node *node) {
+  sb_printf(sb, "[%c-%c]", node->data.range.from, node->data.range.to);
+}
+
+void fmt_pat_some(String_Builder *sb, Node *node) {
+  sb_printf(sb, "(");
+  fmt_pat_rec(sb, node->data.some.node);
+  sb_printf(sb, ")+");
+}
+
+void fmt_pat_many(String_Builder *sb, Node *node) {
+  sb_printf(sb, "(");
+  fmt_pat_rec(sb, node->data.many.node);
+  sb_printf(sb, ")*");
+}
+
+void fmt_pat_opt(String_Builder *sb, Node *node) {
+  sb_printf(sb, "(");
+  fmt_pat_rec(sb, node->data.opt.node);
+  sb_printf(sb, ")?");
+}
+
+void fmt_pat_seq(String_Builder *sb, Node *node) {
+  for (auto n = node->data.seq.nodes; *n != nullptr; n++) {
+    fmt_pat_rec(sb, *n);
+  }
+}
+
+void fmt_pat_alt(String_Builder *sb, Node *node) {
+  sb_printf(sb, "(");
+  bool first = true;
+  for (auto n = node->data.alt.nodes; *n != nullptr; n++) {
+    if (!first) {
+      sb_printf(sb, "|");
+    }
+    fmt_pat_rec(sb, *n);
+    first = false;
+  }
+  sb_printf(sb, ")");
+}
+
+void fmt_pat_not(String_Builder *sb, Node *node) {
+  sb_printf(sb, "(?!");
+  fmt_pat_rec(sb, node->data.not.node);
+  sb_printf(sb, ")");
+}
+
+void fmt_pat_try(String_Builder *sb, Node *node) {
+  sb_printf(sb, "(?=");
+  fmt_pat_rec(sb, node->data.try.node);
+  sb_printf(sb, ")");
+}
+
+void fmt_pat_capture(String_Builder *sb, Node *node) {
+  fmt_pat_rec(sb, node->data.capture.node);
+}
+
+void fmt_pat_rec(String_Builder *sb, Node *node) {
+  switch (node->type) {
+    case NODE_END:
+      return fmt_pat_end(sb, node);
+    case NODE_ANY:
+      return fmt_pat_any(sb, node);
+    case NODE_STRING:
+      return fmt_pat_string(sb, node);
+    case NODE_ONEOF:
+      return fmt_pat_oneof(sb, node);
+    case NODE_RANGE:
+      return fmt_pat_range(sb, node);
+    case NODE_SOME:
+      return fmt_pat_some(sb, node);
+    case NODE_MANY:
+      return fmt_pat_many(sb, node);
+    case NODE_OPT:
+      return fmt_pat_opt(sb, node);
+    case NODE_SEQ:
+      return fmt_pat_seq(sb, node);
+    case NODE_ALT:
+      return fmt_pat_alt(sb, node);
+    case NODE_NOT:
+      return fmt_pat_not(sb, node);
+    case NODE_TRY:
+      return fmt_pat_try(sb, node);
+    case NODE_CAPTURE:
+      return fmt_pat_capture(sb, node);
+    default:
+      assert(0 && "Unknown node type");
+  }
+}
