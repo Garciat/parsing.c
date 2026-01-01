@@ -437,7 +437,6 @@ int main() {
   return 0;
 }
 
-
 void test_end() {
   assert(match_cstr(END(), ""));
   assert(!match_cstr(END(), "a"));
