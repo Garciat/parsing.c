@@ -115,7 +115,7 @@ typedef struct {
   Match_State state;
 } Match_Expect;
 
-void print_expect(FILE *out, Match_Expect expect);
+void fmt_expect(String_Builder *sb, Match_Expect expect);
 
 typedef struct {
   enum {
@@ -127,6 +127,10 @@ typedef struct {
   Match_State state;
   Node *expected;
 } Match_Result;
+
+Match_Expect result_to_expect(Match_Result res) {
+  return (Match_Expect){ .node = res.expected, .state = res.state };
+}
 
 Match_Result match_rec(Node *node, Match_State state);
 
@@ -195,16 +199,24 @@ Match_Result match_many(Node *node, Match_State state) {
 
   auto res = (Match_Result){ .status = EMPTY_OK, .state = state };
 
+  bool consumed = false;
+
   while (true) {
     res = match_rec(node->data.many.node, res.state);
     switch (res.status) {
       case CONSUMED_OK:
+        consumed = true;
+        continue;
       case EMPTY_OK:
         continue;
       case CONSUMED_ERROR:
         return res;
       case EMPTY_ERROR:
-        return (Match_Result){ .status = EMPTY_OK, .state = res.state };
+        if (consumed) {
+          return (Match_Result){ .status = CONSUMED_OK, .state = res.state };
+        } else {
+          return (Match_Result){ .status = EMPTY_OK, .state = res.state };
+        }
     }
   }
 }
@@ -244,15 +256,24 @@ Match_Result match_seq(Node *node, Match_State state) {
 
   auto res = (Match_Result){ .status = EMPTY_OK, .state = state };
 
+  bool consumed = false;
+
   for (auto n = node->data.seq.nodes; *n != nullptr; n++) {
     res = match_rec(*n, res.state);
     switch (res.status) {
       case CONSUMED_OK:
+        consumed = true;
+        continue;
       case EMPTY_OK:
         continue;
       case CONSUMED_ERROR:
-      case EMPTY_ERROR:
         return res;
+      case EMPTY_ERROR:
+        if (consumed) {
+          return (Match_Result){ .status = CONSUMED_ERROR, .state = res.state, .expected = res.expected };
+        } else {
+          return res;
+        }
     }
   }
 
@@ -360,7 +381,7 @@ Match_Result match_rec(Node *node, Match_State state) {
   }
 }
 
-bool match(Node *pattern, String_View input, Match_Expect *out_expect) {
+bool match(Node *pattern, String_View input, String_Builder *out_expect) {
   auto res = match_rec(pattern, (Match_State){ .sv = input, .position = 0 });
   switch (res.status) {
     case CONSUMED_OK:
@@ -369,7 +390,7 @@ bool match(Node *pattern, String_View input, Match_Expect *out_expect) {
     case CONSUMED_ERROR:
     case EMPTY_ERROR: {
       if (out_expect != nullptr) {
-        *out_expect = (Match_Expect){ .node = res.expected, .state = res.state };
+        fmt_expect(out_expect, result_to_expect(res));
       }
       return false;
     }
@@ -389,12 +410,12 @@ typedef struct {
   String_View path;
 } URL_Match;
 
-bool match_url(const char *input, URL_Match *out, Match_Expect *out_expect) {
+bool match_url(const char *input, URL_Match *out, String_Builder *out_expect) {
   auto domain_char = ALT(
     RANGE('a', 'z'),
     RANGE('A', 'Z'),
     RANGE('0', '9'),
-    ONEOF("-.")
+    ONEOF("-")
   );
 
   auto path_char = ALT(
@@ -411,7 +432,8 @@ bool match_url(const char *input, URL_Match *out, Match_Expect *out_expect) {
     CAPTURE(
       &out->domain,
       SEQ(
-        SOME(domain_char)
+        SOME(domain_char),
+        MANY(SEQ(STR("."), SOME(domain_char)))
       )
     ),
     CAPTURE(
@@ -521,6 +543,10 @@ void test_capture() {
   assert(!match_cstr(pat, "hell"));
 }
 
+void test_misc() {
+  assert(!match_cstr(MANY(SEQ(STR("."), SOME(RANGE('a', 'z')))), ".com.123"));
+}
+
 void test_core() {
   test_end();
   test_any();
@@ -535,15 +561,22 @@ void test_core() {
   test_not();
   test_try();
   test_capture();
+  test_misc();
 }
 
 bool match_url_test(const char *input, URL_Match *out) {
-  Match_Expect expect;
+  String_Builder expect = {0};
   bool r = match_url(input, out, &expect);
   if (!r) {
-    print_expect(stderr, expect);
+    fprintf(stderr, "%.*s\n", (int)expect.count, expect.items);
+    free(expect.items);
   }
   return r;
+}
+
+bool match_url_fail_test(const char *input) {
+  URL_Match out;
+  return !match_url(input, &out, nullptr);
 }
 
 void test_url() {
@@ -556,9 +589,11 @@ void test_url() {
   assert(strncmp(url.domain.data, "sub.domain.org", url.domain.size) == 0);
   assert(strncmp(url.path.data, "/", url.path.size) == 0);
 
-  assert(match_url_test("http://example./path", &url));
+  assert(match_url_test("http://example/path", &url));
+  assert(strncmp(url.domain.data, "example", url.domain.size) == 0);
+  assert(strncmp(url.path.data, "/path", url.path.size) == 0);
 
-  assert(!match_url_test("ftp://example.com/path", &url));
+  assert(match_url_fail_test("ftp://example.com/path"));
 }
 
 // ==============================================================
@@ -566,6 +601,14 @@ void test_url() {
 // ==============================================================
 
 void fmt_expect_rec(String_Builder *sb, Match_Expect expect);
+
+void fmt_expect(String_Builder *sb, Match_Expect expect) {
+  sb_printf(sb, "%.*s\n", (int)expect.state.sv.size, expect.state.sv.data);
+  sb_printf(sb, "%*s^\n", (int)expect.state.position, "");
+
+  sb_printf(sb, "Match failure at character %zu:\nExpected ", expect.state.position+1);
+  fmt_expect_rec(sb, expect);
+}
 
 void fmt_expect_end(String_Builder *sb, Match_Expect) {
   sb_printf(sb, "end of input");
@@ -623,15 +666,5 @@ void fmt_expect_rec(String_Builder *sb, Match_Expect expect) {
       sb_printf(sb, "<complex pattern>");
       return;
   }
-}
-
-void print_expect(FILE *stream, Match_Expect expect) {
-  String_Builder sb = {0};
-  fmt_expect_rec(&sb, expect);
-  fprintf(stream, "Expected %s at position %zu\n", sb.items, expect.state.position);
-  // show input and a caret
-  fprintf(stream, "%.*s\n", (int)expect.state.sv.size, expect.state.sv.data);
-  fprintf(stream, "%*s^\n", (int)expect.state.position, "");
-  free(sb.items);
 }
 
