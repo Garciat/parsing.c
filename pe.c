@@ -6,8 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define ALWAYS_INLINE __attribute__((always_inline))
-
 // ==============================================================
 
 const auto ENDIAN_LE = (int){0};
@@ -104,6 +102,7 @@ typedef struct Parser {
 #define SKIP(n) (&(Parser){ .kind = PARSER_SKIP, .skip = { .count = n } })
 
 #define CAPTURE(o, p) (&(Parser){ .kind = PARSER_CAPTURE, .capture = { .parser = p, .output = o, .size = sizeof(*(o)) } })
+#define CAPTURE_N(o, n, p) (&(Parser){ .kind = PARSER_CAPTURE, .capture = { .parser = p, .output = o, .size = n * sizeof(*(o)) } })
 #define CAPTURE_ARRAY(o, p) (&(Parser){ .kind = PARSER_CAPTURE, .capture = { .parser = p, .output = o, .size = sizeof(o) } })
 
 #define CONST_U2(value, p) (&(Parser){ .kind = PARSER_CONST, .constant = { .u2 = value, .parser = p } })
@@ -122,18 +121,15 @@ typedef struct ParserState {
   size_t offset;
 } ParserState;
 
-ALWAYS_INLINE
 bool state_has_bytes(ParserState state, size_t count) {
   return state.offset + count <= state.count;
 }
 
-ALWAYS_INLINE
 const uint8_t *state_current(ParserState state) {
   assert(state.offset < state.count);
   return state.data + state.offset;
 }
 
-ALWAYS_INLINE
 ParserState state_advance(ParserState state, size_t count) {
   assert(state_has_bytes(state, count));
   return (ParserState){ .data = state.data, .count = state.count, .offset = state.offset + count };
@@ -164,7 +160,6 @@ typedef struct ParserResult {
   };
 } ParserResult;
 
-ALWAYS_INLINE
 ParserResult result_fail_empty(ParserState state, Parser *expected) {
   return (ParserResult){
     .kind = RESULT_EMPTY_ERROR,
@@ -173,7 +168,6 @@ ParserResult result_fail_empty(ParserState state, Parser *expected) {
   };
 }
 
-ALWAYS_INLINE
 ParserResult result_fail_consumed(ParserState state, Parser *expected) {
   return (ParserResult){
     .kind = RESULT_CONSUMED_ERROR,
@@ -184,15 +178,12 @@ ParserResult result_fail_consumed(ParserState state, Parser *expected) {
 
 // ==============================================================
 
-ALWAYS_INLINE
 ParserResult parse_rec(ParserState state, Parser *parser);
 
-ALWAYS_INLINE
 ParserResult parser_run(ParserState state, Parser *parser) {
   return parse_rec(state, parser);
 }
 
-ALWAYS_INLINE
 ParserResult parse_skip(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_SKIP);
 
@@ -206,7 +197,6 @@ ParserResult parse_skip(ParserState state, Parser *parser) {
   };
 }
 
-ALWAYS_INLINE
 ParserResult parse_u2(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_U2);
 
@@ -221,7 +211,6 @@ ParserResult parse_u2(ParserState state, Parser *parser) {
   };
 }
 
-ALWAYS_INLINE
 ParserResult parse_u4(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_U4);
 
@@ -236,7 +225,6 @@ ParserResult parse_u4(ParserState state, Parser *parser) {
   };
 }
 
-ALWAYS_INLINE
 ParserResult parse_u8(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_U8);
 
@@ -251,7 +239,6 @@ ParserResult parse_u8(ParserState state, Parser *parser) {
   };
 }
 
-ALWAYS_INLINE
 ParserResult parse_capture(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_CAPTURE);
   assert(parser->capture.parser != nullptr);
@@ -273,7 +260,6 @@ ParserResult parse_capture(ParserState state, Parser *parser) {
   }
 }
 
-ALWAYS_INLINE
 ParserResult parse_const(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_CONST);
 
@@ -321,7 +307,6 @@ ParserResult parse_const(ParserState state, Parser *parser) {
   }
 }
 
-ALWAYS_INLINE
 ParserResult parse_seq(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_SEQ);
   assert(parser->seq.parsers != nullptr);
@@ -376,7 +361,6 @@ ParserResult parse_alt(ParserState state, Parser *parser) {
   return result_fail_empty(state, parser);
 }
 
-ALWAYS_INLINE
 ParserResult parse_array(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_ARRAY);
   assert(parser->array.parser != nullptr);
@@ -408,7 +392,6 @@ ParserResult parse_array(ParserState state, Parser *parser) {
   return res;
 }
 
-ALWAYS_INLINE
 ParserResult parse_rec(ParserState state, Parser *parser) {
   switch (parser->kind) {
     case PARSER_SKIP:
@@ -716,7 +699,6 @@ bool bb_read_file(Byte_Buffer *bb, const char *path) {
   return true;
 }
 
-ALWAYS_INLINE
 ParserState bb_to_parser_state(Byte_Buffer bb) {
   return (ParserState){ .data = bb.data, .count = bb.count, .offset = 0 };
 }
@@ -824,10 +806,24 @@ typedef struct {
 } Image_Data_Directory;
 
 typedef struct {
+  char name[8];
+  uint32_t virtual_size;
+  uint32_t virtual_address;
+  uint32_t size_of_raw_data;
+  uint32_t pointer_to_raw_data;
+  uint32_t pointer_to_relocations;
+  uint32_t pointer_to_linenumbers;
+  uint16_t number_of_relocations;
+  uint16_t number_of_linenumbers;
+  uint32_t characteristics;
+} Section_Header;
+
+typedef struct {
   COFF_Header coff_header;
   COFF_Standard_Fields standard_fields;
   COFF_Windows_Fields windows_fields;
   Image_Data_Directory data_directories[16];
+  Section_Header *section_headers;
 } PE_File;
 
 void print_coff_header(const COFF_Header *header) {
@@ -893,6 +889,19 @@ void print_coff_windows_fields_pe32p(const COFF_Windows_Fields_PE32P *fields) {
   printf("Number of RVA and Sizes: %u\n", fields->number_of_rva_and_sizes);
 }
 
+void print_section_header(const Section_Header *section) {
+  printf("Name: %.8s\n", section->name);
+  printf("Virtual Size: %u\n", section->virtual_size);
+  printf("Virtual Address: 0x%08X\n", section->virtual_address);
+  printf("Size of Raw Data: %u\n", section->size_of_raw_data);
+  printf("Pointer to Raw Data: %u\n", section->pointer_to_raw_data);
+  printf("Pointer to Relocations: %u\n", section->pointer_to_relocations);
+  printf("Pointer to Line Numbers: %u\n", section->pointer_to_linenumbers);
+  printf("Number of Relocations: %u\n", section->number_of_relocations);
+  printf("Number of Line Numbers: %u\n", section->number_of_linenumbers);
+  printf("Characteristics: 0x%08X\n", section->characteristics);
+}
+
 void print_pe_file(const PE_File *pe_file) {
   printf("=== COFF Header ===\n");
   print_coff_header(&pe_file->coff_header);
@@ -907,6 +916,11 @@ void print_pe_file(const PE_File *pe_file) {
   printf("\n=== Data Directories ===\n");
   for (size_t i = 0; i < 16; i++) {
     printf("%zu: RVA = 0x%08X, Size = %u\n", i, pe_file->data_directories[i].virtual_address, pe_file->data_directories[i].size);
+  }
+  printf("\n=== Section Headers ===\n");
+  for (size_t i = 0; i < pe_file->coff_header.number_of_sections; i++) {
+    printf("\n--- Section %zu ---\n", i + 1);
+    print_section_header(&pe_file->section_headers[i]);
   }
 }
 
@@ -1077,7 +1091,10 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
   {
     auto parser = CAPTURE_ARRAY(
       data_directories,
-      ARRAY(data_directories_count,  SEQ(U4_LE(), U4_LE()))
+      ARRAY(data_directories_count, SEQ(
+        U4_LE(), // virtual_address
+        U4_LE()  // size
+      ))
     );
 
     auto res = parser_run(pstate, parser);
@@ -1088,10 +1105,40 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
     pstate = res.state;
   }
 
+  Section_Header *section_headers = malloc(sizeof(Section_Header) * coff_header.number_of_sections);
+
+  {
+    auto parser = CAPTURE_N(
+      section_headers,
+      coff_header.number_of_sections,
+      ARRAY(coff_header.number_of_sections, SEQ(
+        SKIP(8), // name
+        U4_LE(), // virtual_size
+        U4_LE(), // virtual_address
+        U4_LE(), // size_of_raw_data
+        U4_LE(), // pointer_to_raw_data
+        U4_LE(), // pointer_to_relocations
+        U4_LE(), // pointer_to_linenumbers
+        U2_LE(), // number_of_relocations
+        U2_LE(), // number_of_linenumbers
+        U4_LE()  // characteristics
+      ))
+    );
+
+    auto res = parser_run(pstate, parser);
+    if (!result_handle(res, out_error)) {
+      free(section_headers);
+      return false;
+    }
+
+    pstate = res.state;
+  }
+
   *out_file = (PE_File){
     .coff_header = coff_header,
     .standard_fields = standard_fields,
     .windows_fields = windows_fields,
+    .section_headers = section_headers,
   };
 
   memcpy(out_file->data_directories, data_directories, data_directories_count * sizeof(Image_Data_Directory));
