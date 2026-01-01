@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ==============================================================
+// # Utilities
+// ==============================================================
+
 typedef struct {
   const char *data;
   size_t size;
@@ -38,6 +42,10 @@ void sb_printf(String_Builder *sb, const char *fmt, ...) {
 
   sb->count += needed;
 }
+
+// ==============================================================
+// # Node Definitions
+// ==============================================================
 
 typedef struct Node {
   enum { 
@@ -88,89 +96,26 @@ typedef struct Node {
 #define TRY(n)             (&(Node){ .type = NODE_TRY, .data.try = { n } })
 #define CAPTURE(output, n) (&(Node){ .type = NODE_CAPTURE, .data.capture = { n, output } })
 
+// ==============================================================
+// # Matching Engine
+// ==============================================================
+
 typedef struct {
   String_View sv;
   size_t position;
 } Match_State;
 
+Match_State state_advance(Match_State state, size_t n) {
+  assert(state.position + n <= state.sv.size);
+  return (Match_State){ .sv = state.sv, .position = state.position + n };
+}
 
 typedef struct {
   Node *node;
   Match_State state;
 } Match_Expect;
 
-void fmt_expect_rec(String_Builder *sb, Match_Expect expect);
-
-void fmt_expect_end(String_Builder *sb, Match_Expect) {
-  sb_printf(sb, "end of input");
-}
-
-void fmt_expect_any(String_Builder *sb, Match_Expect) {
-  sb_printf(sb, "any character");
-}
-
-void fmt_expect_string(String_Builder *sb, Match_Expect expect) {
-  sb_printf(sb, "\"%s\"", expect.node->data.string.str);
-}
-
-void fmt_expect_oneof(String_Builder *sb, Match_Expect expect) {
-  sb_printf(sb, "one of characters \"%s\"", expect.node->data.oneof.chars);
-}
-
-void fmt_expect_range(String_Builder *sb, Match_Expect expect) {
-  sb_printf(sb, "character in range '%c'-'%c'", 
-            expect.node->data.range.from,
-            expect.node->data.range.to);
-}
-
-void fmt_expect_alt(String_Builder *sb, Match_Expect expect) {
-  sb_printf(sb, "one of:\n");
-  for (auto n = expect.node->data.alt.nodes; *n != nullptr; n++) {
-    sb_printf(sb, "  ");
-    fmt_expect_rec(sb, (Match_Expect){ .node = *n });
-    sb_printf(sb, "\n");
-  }
-}
-
-void fmt_expect_not(String_Builder *sb, Match_Expect expect) {
-  sb_printf(sb, "not ");
-  fmt_expect_rec(sb, (Match_Expect){ .node = expect.node->data.not.node });
-}
-
-void fmt_expect_rec(String_Builder *sb, Match_Expect expect) {
-  switch (expect.node->type) {
-    case NODE_END:
-      return fmt_expect_end(sb, expect);
-    case NODE_ANY:
-      return fmt_expect_any(sb, expect);
-    case NODE_STRING:
-      return fmt_expect_string(sb, expect);
-    case NODE_ONEOF:
-      return fmt_expect_oneof(sb, expect);
-    case NODE_RANGE:
-      return fmt_expect_range(sb, expect);
-    case NODE_ALT:
-      return fmt_expect_alt(sb, expect);
-    default:
-      sb_printf(sb, "<complex pattern>");
-      return;
-  }
-}
-
-void print_expect(FILE *stream, Match_Expect expect) {
-  String_Builder sb = {0};
-  fmt_expect_rec(&sb, expect);
-  fprintf(stream, "Expected %s at position %zu\n", sb.items, expect.state.position);
-  // show input and a caret
-  fprintf(stream, "%.*s\n", (int)expect.state.sv.size, expect.state.sv.data);
-  fprintf(stream, "%*s^\n", (int)expect.state.position, "");
-  free(sb.items);
-}
-
-Match_State state_advance(Match_State state, size_t n) {
-  assert(state.position + n <= state.sv.size);
-  return (Match_State){ .sv = state.sv, .position = state.position + n };
-}
+void print_expect(FILE *out, Match_Expect expect);
 
 typedef struct {
   enum {
@@ -435,6 +380,10 @@ bool match_cstr(Node *pattern, const char *input) {
   return match(pattern, sv_from_cstr(input), nullptr);
 }
 
+// ==============================================================
+// # URL Matching Example
+// ==============================================================
+
 typedef struct {
   String_View domain;
   String_View path;
@@ -474,6 +423,20 @@ bool match_url(const char *input, URL_Match *out, Match_Expect *out_expect) {
 
   return match(pat, sv_from_cstr(input), out_expect);
 }
+
+// ==============================================================
+// # Tests
+// ==============================================================
+
+void test_core();
+void test_url();
+
+int main() {
+  test_core();
+  test_url();
+  return 0;
+}
+
 
 void test_end() {
   assert(match_cstr(END(), ""));
@@ -559,7 +522,7 @@ void test_capture() {
   assert(!match_cstr(pat, "hell"));
 }
 
-void test_core_all() {
+void test_core() {
   test_end();
   test_any();
   test_string();
@@ -599,8 +562,75 @@ void test_url() {
   assert(!match_url_test("ftp://example.com/path", &url));
 }
 
-int main() {
-  test_core_all();
-  test_url();
-  return 0;
+// ==============================================================
+// # Debug Printing
+// ==============================================================
+
+void fmt_expect_rec(String_Builder *sb, Match_Expect expect);
+
+void fmt_expect_end(String_Builder *sb, Match_Expect) {
+  sb_printf(sb, "end of input");
 }
+
+void fmt_expect_any(String_Builder *sb, Match_Expect) {
+  sb_printf(sb, "any character");
+}
+
+void fmt_expect_string(String_Builder *sb, Match_Expect expect) {
+  sb_printf(sb, "\"%s\"", expect.node->data.string.str);
+}
+
+void fmt_expect_oneof(String_Builder *sb, Match_Expect expect) {
+  sb_printf(sb, "one of characters \"%s\"", expect.node->data.oneof.chars);
+}
+
+void fmt_expect_range(String_Builder *sb, Match_Expect expect) {
+  sb_printf(sb, "character in range '%c'-'%c'", 
+            expect.node->data.range.from,
+            expect.node->data.range.to);
+}
+
+void fmt_expect_alt(String_Builder *sb, Match_Expect expect) {
+  sb_printf(sb, "one of:\n");
+  for (auto n = expect.node->data.alt.nodes; *n != nullptr; n++) {
+    sb_printf(sb, "  ");
+    fmt_expect_rec(sb, (Match_Expect){ .node = *n });
+    sb_printf(sb, "\n");
+  }
+}
+
+void fmt_expect_not(String_Builder *sb, Match_Expect expect) {
+  sb_printf(sb, "not ");
+  fmt_expect_rec(sb, (Match_Expect){ .node = expect.node->data.not.node });
+}
+
+void fmt_expect_rec(String_Builder *sb, Match_Expect expect) {
+  switch (expect.node->type) {
+    case NODE_END:
+      return fmt_expect_end(sb, expect);
+    case NODE_ANY:
+      return fmt_expect_any(sb, expect);
+    case NODE_STRING:
+      return fmt_expect_string(sb, expect);
+    case NODE_ONEOF:
+      return fmt_expect_oneof(sb, expect);
+    case NODE_RANGE:
+      return fmt_expect_range(sb, expect);
+    case NODE_ALT:
+      return fmt_expect_alt(sb, expect);
+    default:
+      sb_printf(sb, "<complex pattern>");
+      return;
+  }
+}
+
+void print_expect(FILE *stream, Match_Expect expect) {
+  String_Builder sb = {0};
+  fmt_expect_rec(&sb, expect);
+  fprintf(stream, "Expected %s at position %zu\n", sb.items, expect.state.position);
+  // show input and a caret
+  fprintf(stream, "%.*s\n", (int)expect.state.sv.size, expect.state.sv.data);
+  fprintf(stream, "%*s^\n", (int)expect.state.position, "");
+  free(sb.items);
+}
+
