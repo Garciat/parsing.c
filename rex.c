@@ -618,6 +618,8 @@ void fmt_expect_rec(String_Builder *sb, Match_Expect expect) {
       return fmt_expect_range(sb, expect);
     case NODE_ALT:
       return fmt_expect_alt(sb, expect);
+    case NODE_NOT:
+      return fmt_expect_not(sb, expect);
     default:
       sb_printf(sb, "<complex pattern>");
       return;
