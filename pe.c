@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -887,7 +888,7 @@ void print_coff_windows_fields_pe32(const COFF_Windows_Fields_PE32 *fields) {
 }
 
 void print_coff_windows_fields_pe32p(const COFF_Windows_Fields_PE32P *fields) {
-  printf("Image Base: 0x%016llX\n", fields->image_base);
+  printf("Image Base: 0x%016"PRIu64"\n", fields->image_base);
   printf("Section Alignment: %u\n", fields->section_alignment);
   printf("File Alignment: %u\n", fields->file_alignment);
   printf("Operating System Version: %u.%u\n", fields->major_operating_system_version, fields->minor_operating_system_version);
@@ -899,10 +900,10 @@ void print_coff_windows_fields_pe32p(const COFF_Windows_Fields_PE32P *fields) {
   printf("Check Sum: %u\n", fields->check_sum);
   printf("Subsystem: 0x%04X\n", fields->subsystem);
   printf("DLL Characteristics: 0x%04X\n", fields->dll_characteristics);
-  printf("Size of Stack Reserve: %llu\n", fields->size_of_stack_reserve);
-  printf("Size of Stack Commit: %llu\n", fields->size_of_stack_commit);
-  printf("Size of Heap Reserve: %llu\n", fields->size_of_heap_reserve);
-  printf("Size of Heap Commit: %llu\n", fields->size_of_heap_commit);
+  printf("Size of Stack Reserve: %"PRIu64"\n", fields->size_of_stack_reserve);
+  printf("Size of Stack Commit: %"PRIu64"\n", fields->size_of_stack_commit);
+  printf("Size of Heap Reserve: %"PRIu64"\n", fields->size_of_heap_reserve);
+  printf("Size of Heap Commit: %"PRIu64"\n", fields->size_of_heap_commit);
   printf("Loader Flags: %u\n", fields->loader_flags);
   printf("Number of RVA and Sizes: %u\n", fields->number_of_rva_and_sizes);
 }
