@@ -79,22 +79,22 @@ typedef struct Node {
     struct { struct Node *node; } not;
     struct { struct Node *node; } try;
     struct { struct Node *node; String_View *output; } capture;
-  } data;
+  };
 } Node;
 
 #define END()              (&(Node){ .type = NODE_END }) 
 #define ANY()              (&(Node){ .type = NODE_ANY })
-#define STR(s)             (&(Node){ .type = NODE_STRING, .data.string = { s } })
-#define ONEOF(chars)       (&(Node){ .type = NODE_ONEOF, .data.oneof = { chars } })
-#define RANGE(from, to)    (&(Node){ .type = NODE_RANGE, .data.range = { from, to } })
-#define SOME(n)            (&(Node){ .type = NODE_SOME, .data.some = { n } })
-#define MANY(n)            (&(Node){ .type = NODE_MANY, .data.many = { n } })
-#define OPT(n)             (&(Node){ .type = NODE_OPT, .data.opt = { n } })
-#define SEQ(...)           (&(Node){ .type = NODE_SEQ, .data.seq = { (Node*[]){ __VA_ARGS__, nullptr } } })
-#define ALT(...)           (&(Node){ .type = NODE_ALT, .data.alt = { (Node*[]){ __VA_ARGS__, nullptr } } })
-#define NOT(n)             (&(Node){ .type = NODE_NOT, .data.not = { n } })
-#define TRY(n)             (&(Node){ .type = NODE_TRY, .data.try = { n } })
-#define CAPTURE(output, n) (&(Node){ .type = NODE_CAPTURE, .data.capture = { n, output } })
+#define STR(s)             (&(Node){ .type = NODE_STRING, .string = { s } })
+#define ONEOF(chars)       (&(Node){ .type = NODE_ONEOF, .oneof = { chars } })
+#define RANGE(from, to)    (&(Node){ .type = NODE_RANGE, .range = { from, to } })
+#define SOME(n)            (&(Node){ .type = NODE_SOME, .some = { n } })
+#define MANY(n)            (&(Node){ .type = NODE_MANY, .many = { n } })
+#define OPT(n)             (&(Node){ .type = NODE_OPT, .opt = { n } })
+#define SEQ(...)           (&(Node){ .type = NODE_SEQ, .seq = { (Node*[]){ __VA_ARGS__, nullptr } } })
+#define ALT(...)           (&(Node){ .type = NODE_ALT, .alt = { (Node*[]){ __VA_ARGS__, nullptr } } })
+#define NOT(n)             (&(Node){ .type = NODE_NOT, .not = { n } })
+#define TRY(n)             (&(Node){ .type = NODE_TRY, .try = { n } })
+#define CAPTURE(output, n) (&(Node){ .type = NODE_CAPTURE, .capture = { n, output } })
 
 // ==============================================================
 // # Matching Types
@@ -163,16 +163,16 @@ Match_Result match_any(Node *node, Match_State state) {
 
 // Consumes prefix on failure
 Match_Result match_string(Node *node, Match_State state) {
-  assert(node->data.string.str != nullptr);
+  assert(node->string.str != nullptr);
 
   size_t i = 0;
-  for (; node->data.string.str[i] && state.position + i < state.sv.size; i++) {
-    if (state.sv.data[state.position + i] != node->data.string.str[i]) {
+  for (; node->string.str[i] && state.position + i < state.sv.size; i++) {
+    if (state.sv.data[state.position + i] != node->string.str[i]) {
       break;
     }
   }
 
-  if (node->data.string.str[i] == '\0') {
+  if (node->string.str[i] == '\0') {
     return result_ok_consumed(state_advance(state, i));
   } else if (i == 0) {
     return result_err_empty(state, node);
@@ -182,10 +182,10 @@ Match_Result match_string(Node *node, Match_State state) {
 }
 
 Match_Result match_oneof(Node *node, Match_State state) {
-  assert(node->data.oneof.chars != nullptr);
+  assert(node->oneof.chars != nullptr);
 
   if (state.position < state.sv.size) {
-    for (char *c = node->data.oneof.chars; *c != '\0'; c++) {
+    for (char *c = node->oneof.chars; *c != '\0'; c++) {
       if (state.sv.data[state.position] == *c) {
         return (Match_Result){ .status = CONSUMED_OK, .state = state_advance(state, 1) };
       }
@@ -196,11 +196,11 @@ Match_Result match_oneof(Node *node, Match_State state) {
 }
 
 Match_Result match_range(Node *node, Match_State state) {
-  assert(node->data.range.from <= node->data.range.to);
+  assert(node->range.from <= node->range.to);
 
   if (state.position < state.sv.size &&
-      state.sv.data[state.position] >= node->data.range.from &&
-      state.sv.data[state.position] <= node->data.range.to) {
+      state.sv.data[state.position] >= node->range.from &&
+      state.sv.data[state.position] <= node->range.to) {
     return result_ok_consumed(state_advance(state, 1));
   }
   
@@ -208,14 +208,14 @@ Match_Result match_range(Node *node, Match_State state) {
 }
 
 Match_Result match_many(Node *node, Match_State state) {
-  assert(node->data.many.node != nullptr);
+  assert(node->many.node != nullptr);
 
   auto res = result_ok_empty(state);
 
   bool consumed = false;
 
   while (true) {
-    res = match_rec(node->data.many.node, res.state);
+    res = match_rec(node->many.node, res.state);
     switch (res.status) {
       case CONSUMED_OK:
         consumed = true;
@@ -235,9 +235,9 @@ Match_Result match_many(Node *node, Match_State state) {
 }
 
 Match_Result match_some(Node *node, Match_State state) {
-  assert(node->data.some.node != nullptr);
+  assert(node->some.node != nullptr);
 
-  auto res = match_rec(node->data.some.node, state);
+  auto res = match_rec(node->some.node, state);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
@@ -251,9 +251,9 @@ Match_Result match_some(Node *node, Match_State state) {
 }
 
 Match_Result match_opt(Node *node, Match_State state) {
-  assert(node->data.opt.node != nullptr);
+  assert(node->opt.node != nullptr);
 
-  auto res = match_rec(node->data.opt.node, state);
+  auto res = match_rec(node->opt.node, state);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
@@ -265,13 +265,13 @@ Match_Result match_opt(Node *node, Match_State state) {
 }
 
 Match_Result match_seq(Node *node, Match_State state) {
-  assert(node->data.seq.nodes != nullptr);
+  assert(node->seq.nodes != nullptr);
 
   auto res = result_ok_empty(state);
 
   bool consumed = false;
 
-  for (auto n = node->data.seq.nodes; *n != nullptr; n++) {
+  for (auto n = node->seq.nodes; *n != nullptr; n++) {
     res = match_rec(*n, res.state);
     switch (res.status) {
       case CONSUMED_OK:
@@ -294,9 +294,9 @@ Match_Result match_seq(Node *node, Match_State state) {
 }
 
 Match_Result match_alt(Node *node, Match_State state) {
-  assert(node->data.alt.nodes != nullptr);
+  assert(node->alt.nodes != nullptr);
 
-  for (auto n = node->data.alt.nodes; *n != nullptr; n++) {
+  for (auto n = node->alt.nodes; *n != nullptr; n++) {
     auto res = match_rec(*n, state);
     switch (res.status) {
       case CONSUMED_OK:
@@ -313,9 +313,9 @@ Match_Result match_alt(Node *node, Match_State state) {
 }
 
 Match_Result match_not(Node *node, Match_State state) {
-  assert(node->data.not.node != nullptr);
+  assert(node->not.node != nullptr);
 
-  auto res = match_rec(node->data.not.node, state);
+  auto res = match_rec(node->not.node, state);
   switch (res.status) {
     case CONSUMED_OK:
       return result_err_consumed(state, node);
@@ -329,9 +329,9 @@ Match_Result match_not(Node *node, Match_State state) {
 }
 
 Match_Result match_try(Node *node, Match_State state) {
-  assert(node->data.try.node != nullptr);
+  assert(node->try.node != nullptr);
 
-  auto res = match_rec(node->data.try.node, state);
+  auto res = match_rec(node->try.node, state);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
@@ -343,14 +343,14 @@ Match_Result match_try(Node *node, Match_State state) {
 }
 
 Match_Result match_capture(Node *node, Match_State state) {
-  assert(node->data.capture.node != nullptr);
-  assert(node->data.capture.output != nullptr);
+  assert(node->capture.node != nullptr);
+  assert(node->capture.output != nullptr);
 
-  auto res = match_rec(node->data.capture.node, state);
+  auto res = match_rec(node->capture.node, state);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
-      *(node->data.capture.output) = (String_View){
+      *(node->capture.output) = (String_View){
         .data = state.sv.data + state.position,
         .size = res.state.position - state.position
       };
@@ -636,22 +636,22 @@ void fmt_expect_any(String_Builder *sb, Node *) {
 }
 
 void fmt_expect_string(String_Builder *sb, Node *node) {
-  sb_printf(sb, "\"%s\"", node->data.string.str);
+  sb_printf(sb, "\"%s\"", node->string.str);
 }
 
 void fmt_expect_oneof(String_Builder *sb, Node *node) {
-  sb_printf(sb, "one of characters \"%s\"", node->data.oneof.chars);
+  sb_printf(sb, "one of characters \"%s\"", node->oneof.chars);
 }
 
 void fmt_expect_range(String_Builder *sb, Node *node) {
   sb_printf(sb, "character in range '%c'-'%c'", 
-            node->data.range.from,
-            node->data.range.to);
+            node->range.from,
+            node->range.to);
 }
 
 void fmt_expect_alt(String_Builder *sb, Node *node) {
   sb_printf(sb, "one of:\n");
-  for (auto n = node->data.alt.nodes; *n != nullptr; n++) {
+  for (auto n = node->alt.nodes; *n != nullptr; n++) {
     sb_printf(sb, "  ");
     fmt_expect_rec(sb, *n);
     sb_printf(sb, "\n");
@@ -660,7 +660,7 @@ void fmt_expect_alt(String_Builder *sb, Node *node) {
 
 void fmt_expect_not(String_Builder *sb, Node *node) {
   sb_printf(sb, "not ");
-  fmt_expect_rec(sb, node->data.not.node);
+  fmt_expect_rec(sb, node->not.node);
 }
 
 void fmt_expect_rec(String_Builder *sb, Node *node) {
@@ -712,7 +712,7 @@ void fmt_pat_any(String_Builder *sb, Node *) {
 }
 
 void fmt_pat_string(String_Builder *sb, Node *node) {
-  for (char *c = node->data.string.str; *c != '\0'; c++) {
+  for (char *c = node->string.str; *c != '\0'; c++) {
     if (is_special_char(*c)) {
       sb_printf(sb, "\\%c", *c);
     } else {
@@ -722,33 +722,33 @@ void fmt_pat_string(String_Builder *sb, Node *node) {
 }
 
 void fmt_pat_oneof(String_Builder *sb, Node *node) {
-  sb_printf(sb, "[%s]", node->data.oneof.chars);
+  sb_printf(sb, "[%s]", node->oneof.chars);
 }
 
 void fmt_pat_range(String_Builder *sb, Node *node) {
-  sb_printf(sb, "[%c-%c]", node->data.range.from, node->data.range.to);
+  sb_printf(sb, "[%c-%c]", node->range.from, node->range.to);
 }
 
 void fmt_pat_some(String_Builder *sb, Node *node) {
   sb_printf(sb, "(");
-  fmt_pat_rec(sb, node->data.some.node);
+  fmt_pat_rec(sb, node->some.node);
   sb_printf(sb, ")+");
 }
 
 void fmt_pat_many(String_Builder *sb, Node *node) {
   sb_printf(sb, "(");
-  fmt_pat_rec(sb, node->data.many.node);
+  fmt_pat_rec(sb, node->many.node);
   sb_printf(sb, ")*");
 }
 
 void fmt_pat_opt(String_Builder *sb, Node *node) {
   sb_printf(sb, "(");
-  fmt_pat_rec(sb, node->data.opt.node);
+  fmt_pat_rec(sb, node->opt.node);
   sb_printf(sb, ")?");
 }
 
 void fmt_pat_seq(String_Builder *sb, Node *node) {
-  for (auto n = node->data.seq.nodes; *n != nullptr; n++) {
+  for (auto n = node->seq.nodes; *n != nullptr; n++) {
     fmt_pat_rec(sb, *n);
   }
 }
@@ -756,7 +756,7 @@ void fmt_pat_seq(String_Builder *sb, Node *node) {
 void fmt_pat_alt(String_Builder *sb, Node *node) {
   sb_printf(sb, "(");
   bool first = true;
-  for (auto n = node->data.alt.nodes; *n != nullptr; n++) {
+  for (auto n = node->alt.nodes; *n != nullptr; n++) {
     if (!first) {
       sb_printf(sb, "|");
     }
@@ -768,18 +768,18 @@ void fmt_pat_alt(String_Builder *sb, Node *node) {
 
 void fmt_pat_not(String_Builder *sb, Node *node) {
   sb_printf(sb, "(?!");
-  fmt_pat_rec(sb, node->data.not.node);
+  fmt_pat_rec(sb, node->not.node);
   sb_printf(sb, ")");
 }
 
 void fmt_pat_try(String_Builder *sb, Node *node) {
   sb_printf(sb, "(?=");
-  fmt_pat_rec(sb, node->data.try.node);
+  fmt_pat_rec(sb, node->try.node);
   sb_printf(sb, ")");
 }
 
 void fmt_pat_capture(String_Builder *sb, Node *node) {
-  fmt_pat_rec(sb, node->data.capture.node);
+  fmt_pat_rec(sb, node->capture.node);
 }
 
 void fmt_pat_rec(String_Builder *sb, Node *node) {
