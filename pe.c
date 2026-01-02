@@ -53,6 +53,16 @@ uint64_t read_u8(const uint8_t* data, int endian) {
 
 // ==============================================================
 
+typedef struct {
+  bool _unused;
+} unit_t;
+
+unit_t unit() {
+  return (unit_t){};
+}
+
+// ==============================================================
+
 typedef struct Parser {
   enum {
     // Primitive parsers
@@ -529,7 +539,7 @@ size_t parser_min_size(Parser *parser) {
 
 // ==============================================================
 
-void fmt_parser_rec(String_Builder *sb, Parser *parser);
+unit_t fmt_parser_rec(String_Builder *sb, Parser *parser);
 
 void fmt_parser(String_Builder *sb, Parser *parser) {
   fmt_parser_rec(sb, parser);
@@ -554,27 +564,31 @@ void fmt_parser_error(String_Builder *sb, ParserResult res) {
   sb_printf(sb, "\n");
 }
 
-void fmt_parser_skip(String_Builder *sb, Parser *parser) {
+unit_t fmt_parser_skip(String_Builder *sb, Parser *parser) {
   sb_printf(sb, "SKIP(%zu)", parser->skip.count);
+  return unit();
 }
 
-void fmt_parser_u2(String_Builder *sb, Parser *parser) {
+unit_t fmt_parser_u2(String_Builder *sb, Parser *parser) {
   sb_printf(sb, "U2(%s)", parser->u2.endian == ENDIAN_LE ? "LE" : "BE");
+  return unit();
 }
 
-void fmt_parser_u4(String_Builder *sb, Parser *parser) {
+unit_t fmt_parser_u4(String_Builder *sb, Parser *parser) {
   sb_printf(sb, "U4(%s)", parser->u4.endian == ENDIAN_LE ? "LE" : "BE");
+  return unit();
 }
 
-void fmt_parser_u8(String_Builder *sb, Parser *parser) {
+unit_t fmt_parser_u8(String_Builder *sb, Parser *parser) {
   sb_printf(sb, "U8(%s)", parser->u8.endian == ENDIAN_LE ? "LE" : "BE");
+  return unit();
 }
 
-void fmt_parser_capture(String_Builder *sb, Parser *parser) {
-  fmt_parser_rec(sb, parser->capture.parser);
+unit_t fmt_parser_capture(String_Builder *sb, Parser *parser) {
+  return fmt_parser_rec(sb, parser->capture.parser);
 }
 
-void fmt_parser_const(String_Builder *sb, Parser *parser) {
+unit_t fmt_parser_const(String_Builder *sb, Parser *parser) {
   switch (parser->constant.parser->kind) {
     case PARSER_U2:
       sb_printf(sb, "CONST_U2(0x%04X, ", parser->constant.u2);
@@ -594,9 +608,10 @@ void fmt_parser_const(String_Builder *sb, Parser *parser) {
     default:
       assert(0 && "Unsupported constant parser type");
   }
+  return unit();
 }
 
-void fmt_parser_seq(String_Builder *sb, Parser *parser) {
+unit_t fmt_parser_seq(String_Builder *sb, Parser *parser) {
   sb_printf(sb, "SEQ(");
   bool first = true;
   for (auto p = parser->seq.parsers; *p != nullptr; p++) {
@@ -607,9 +622,10 @@ void fmt_parser_seq(String_Builder *sb, Parser *parser) {
     first = false;
   }
   sb_printf(sb, ")");
+  return unit();
 }
 
-void fmt_parser_alt(String_Builder *sb, Parser *parser) {
+unit_t fmt_parser_alt(String_Builder *sb, Parser *parser) {
   sb_printf(sb, "ALT(");
   bool first = true;
   for (auto p = parser->alt.parsers; *p != nullptr; p++) {
@@ -620,15 +636,17 @@ void fmt_parser_alt(String_Builder *sb, Parser *parser) {
     first = false;
   }
   sb_printf(sb, ")");
+  return unit();
 }
 
-void fmt_parser_array(String_Builder *sb, Parser *parser) {
+unit_t fmt_parser_array(String_Builder *sb, Parser *parser) {
   sb_printf(sb, "ARRAY(%zu, ", parser->array.count);
   fmt_parser_rec(sb, parser->array.parser);
   sb_printf(sb, ")");
+  return unit();
 }
 
-void fmt_parser_rec(String_Builder *sb, Parser *parser) {
+unit_t fmt_parser_rec(String_Builder *sb, Parser *parser) {
   switch (parser->kind) {
     case PARSER_SKIP:
       return fmt_parser_skip(sb, parser);
