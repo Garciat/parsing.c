@@ -48,12 +48,14 @@ void sb_printf(String_Builder *sb, const char *fmt, ...) {
 // ==============================================================
 
 typedef struct Node {
-  enum { 
+  enum {
+    // Primitives
     NODE_END,
     NODE_ANY,
     NODE_STRING,
     NODE_ONEOF,
     NODE_RANGE,
+    // Combinators
     NODE_SOME,
     NODE_MANY,
     NODE_OPT,
@@ -61,16 +63,18 @@ typedef struct Node {
     NODE_ALT,
     NODE_NOT,
     NODE_TRY,
-
+    // Actions
     NODE_CAPTURE,
   } type;
 
   union {
-    // struct { } end;
-    // struct { } any;
+    // Primitives
+    struct { } end;
+    struct { } any;
     struct { char *str; } string;
     struct { char *chars; } oneof;
     struct { char from, to; } range;
+    // Combinators
     struct { struct Node *node; } some;
     struct { struct Node *node; } many;
     struct { struct Node *node; } opt;
@@ -78,6 +82,7 @@ typedef struct Node {
     struct { struct Node **nodes; } alt;
     struct { struct Node *node; } not;
     struct { struct Node *node; } try;
+    // Actions
     struct { struct Node *node; String_View *output; } capture;
   };
 } Node;
@@ -104,6 +109,10 @@ typedef struct {
   String_View sv;
   size_t position;
 } Match_State;
+
+Match_State state_from_sv(String_View sv) {
+  return (Match_State){ .sv = sv, .position = 0 };
+}
 
 Match_State state_advance(Match_State state, size_t n) {
   assert(state.position + n <= state.sv.size);
@@ -145,16 +154,16 @@ void fmt_result_err(String_Builder *sb, Match_Result result);
 // # Matching Functions
 // ==============================================================
 
-Match_Result match_rec(Node *node, Match_State state);
+Match_Result match_rec(Match_State state, Node *node);
 
-Match_Result match_end(Node *node, Match_State state) {
+Match_Result match_end(Match_State state, Node *node) {
   if (state.position == state.sv.size) {
     return result_ok_empty(state);
   }
   return result_err_empty(state, node);
 }
 
-Match_Result match_any(Node *node, Match_State state) {
+Match_Result match_any(Match_State state, Node *node) {
   if (state.position < state.sv.size) {
     return result_ok_consumed(state_advance(state, 1));
   }
@@ -162,7 +171,7 @@ Match_Result match_any(Node *node, Match_State state) {
 }
 
 // Consumes prefix on failure
-Match_Result match_string(Node *node, Match_State state) {
+Match_Result match_string(Match_State state, Node *node) {
   assert(node->string.str != nullptr);
 
   size_t i = 0;
@@ -181,7 +190,7 @@ Match_Result match_string(Node *node, Match_State state) {
   }
 }
 
-Match_Result match_oneof(Node *node, Match_State state) {
+Match_Result match_oneof(Match_State state, Node *node) {
   assert(node->oneof.chars != nullptr);
 
   if (state.position < state.sv.size) {
@@ -195,7 +204,7 @@ Match_Result match_oneof(Node *node, Match_State state) {
   return result_err_empty(state, node);
 }
 
-Match_Result match_range(Node *node, Match_State state) {
+Match_Result match_range(Match_State state, Node *node) {
   assert(node->range.from <= node->range.to);
 
   if (state.position < state.sv.size &&
@@ -207,7 +216,7 @@ Match_Result match_range(Node *node, Match_State state) {
   return result_err_empty(state, node);
 }
 
-Match_Result match_many(Node *node, Match_State state) {
+Match_Result match_many(Match_State state, Node *node) {
   assert(node->many.node != nullptr);
 
   auto res = result_ok_empty(state);
@@ -215,7 +224,7 @@ Match_Result match_many(Node *node, Match_State state) {
   bool consumed = false;
 
   while (true) {
-    res = match_rec(node->many.node, res.state);
+    res = match_rec(res.state, node->many.node);
     switch (res.status) {
       case CONSUMED_OK:
         consumed = true;
@@ -234,10 +243,10 @@ Match_Result match_many(Node *node, Match_State state) {
   }
 }
 
-Match_Result match_some(Node *node, Match_State state) {
+Match_Result match_some(Match_State state, Node *node) {
   assert(node->some.node != nullptr);
 
-  auto res = match_rec(node->some.node, state);
+  auto res = match_rec(state, node->some.node);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
@@ -247,13 +256,13 @@ Match_Result match_some(Node *node, Match_State state) {
       return res;
   }
 
-  return match_many(node, res.state);
+  return match_many(res.state, MANY(node->some.node));
 }
 
-Match_Result match_opt(Node *node, Match_State state) {
+Match_Result match_opt(Match_State state, Node *node) {
   assert(node->opt.node != nullptr);
 
-  auto res = match_rec(node->opt.node, state);
+  auto res = match_rec(state, node->opt.node);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
@@ -264,7 +273,7 @@ Match_Result match_opt(Node *node, Match_State state) {
   }
 }
 
-Match_Result match_seq(Node *node, Match_State state) {
+Match_Result match_seq(Match_State state, Node *node) {
   assert(node->seq.nodes != nullptr);
 
   auto res = result_ok_empty(state);
@@ -272,7 +281,7 @@ Match_Result match_seq(Node *node, Match_State state) {
   bool consumed = false;
 
   for (auto n = node->seq.nodes; *n != nullptr; n++) {
-    res = match_rec(*n, res.state);
+    res = match_rec(res.state, *n);
     switch (res.status) {
       case CONSUMED_OK:
         consumed = true;
@@ -293,11 +302,11 @@ Match_Result match_seq(Node *node, Match_State state) {
   return res;
 }
 
-Match_Result match_alt(Node *node, Match_State state) {
+Match_Result match_alt(Match_State state, Node *node) {
   assert(node->alt.nodes != nullptr);
 
   for (auto n = node->alt.nodes; *n != nullptr; n++) {
-    auto res = match_rec(*n, state);
+    auto res = match_rec(state, *n);
     switch (res.status) {
       case CONSUMED_OK:
       case EMPTY_OK:
@@ -312,10 +321,10 @@ Match_Result match_alt(Node *node, Match_State state) {
   return result_err_empty(state, node);
 }
 
-Match_Result match_not(Node *node, Match_State state) {
+Match_Result match_not(Match_State state, Node *node) {
   assert(node->not.node != nullptr);
 
-  auto res = match_rec(node->not.node, state);
+  auto res = match_rec(state, node->not.node);
   switch (res.status) {
     case CONSUMED_OK:
       return result_err_consumed(state, node);
@@ -328,10 +337,10 @@ Match_Result match_not(Node *node, Match_State state) {
   }
 }
 
-Match_Result match_try(Node *node, Match_State state) {
+Match_Result match_try(Match_State state, Node *node) {
   assert(node->try.node != nullptr);
 
-  auto res = match_rec(node->try.node, state);
+  auto res = match_rec(state, node->try.node);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
@@ -342,11 +351,11 @@ Match_Result match_try(Node *node, Match_State state) {
   }
 }
 
-Match_Result match_capture(Node *node, Match_State state) {
+Match_Result match_capture(Match_State state, Node *node) {
   assert(node->capture.node != nullptr);
   assert(node->capture.output != nullptr);
 
-  auto res = match_rec(node->capture.node, state);
+  auto res = match_rec(state, node->capture.node);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
@@ -361,41 +370,41 @@ Match_Result match_capture(Node *node, Match_State state) {
   }
 }
 
-Match_Result match_rec(Node *node, Match_State state) {
+Match_Result match_rec(Match_State state, Node *node) {
   switch (node->type) {
     case NODE_END:
-      return match_end(node, state);
+      return match_end(state, node);
     case NODE_ANY:
-      return match_any(node, state);
+      return match_any(state, node);
     case NODE_STRING:
-      return match_string(node, state);
+      return match_string(state, node);
     case NODE_ONEOF:
-      return match_oneof(node, state);
+      return match_oneof(state, node);
     case NODE_RANGE:
-      return match_range(node, state);
+      return match_range(state, node);
     case NODE_SOME:
-      return match_some(node, state);
+      return match_some(state, node);
     case NODE_MANY:
-      return match_many(node, state);
+      return match_many(state, node);
     case NODE_OPT:
-      return match_opt(node, state);
+      return match_opt(state, node);
     case NODE_SEQ:
-      return match_seq(node, state);
+      return match_seq(state, node);
     case NODE_ALT:
-      return match_alt(node, state);
+      return match_alt(state, node);
     case NODE_NOT:
-      return match_not(node, state);
+      return match_not(state, node);
     case NODE_TRY:
-      return match_try(node, state);
+      return match_try(state, node);
     case NODE_CAPTURE:
-      return match_capture(node, state);
+      return match_capture(state, node);
     default:
       assert(0 && "Unknown node type");
   }
 }
 
 bool match(Node *pattern, String_View input, String_Builder *out_expect) {
-  auto res = match_rec(pattern, (Match_State){ .sv = input, .position = 0 });
+  auto res = match_rec(state_from_sv(input), pattern);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
