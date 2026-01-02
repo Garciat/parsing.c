@@ -1170,7 +1170,7 @@ int main() {
   Byte_Buffer bb = {0};
   String_Builder error = {0};
 
-  if (!bb_read_file(&bb, "build/Main.dll")) return 1;
+  if (!bb_read_file(&bb, "resources/Main.dll")) return 1;
 
   printf("Read %zu bytes from file.\n", bb.count);
 
