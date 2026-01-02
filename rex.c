@@ -10,6 +10,14 @@
 // ==============================================================
 
 typedef struct {
+  bool _unused;
+} unit_t;
+
+unit_t unit() {
+  return (unit_t){};
+}
+
+typedef struct {
   const char *data;
   size_t size;
 } String_View;
@@ -76,8 +84,8 @@ typedef struct Node {
 
   union {
     // Primitives
-    struct { } end;
-    struct { } any;
+    struct { bool _unused; } end;
+    struct { bool _unused; } any;
     struct { char *str; } string;
     struct { char *chars; } oneof;
     struct { char from, to; } range;
@@ -961,21 +969,23 @@ bool is_special_char(char c) {
          c == '$' || c == '\\';
 }
 
-void fmt_pat_rec(String_Builder *sb, Node *node);
+unit_t fmt_pat_rec(String_Builder *sb, Node *node);
 
 void fmt_pat(String_Builder *sb, Node *node) {
   fmt_pat_rec(sb, node);
 }
 
-void fmt_pat_end(String_Builder *sb, Node *) {
+unit_t fmt_pat_end(String_Builder *sb, Node *) {
   sb_printf(sb, "$");
+  return unit();
 }
 
-void fmt_pat_any(String_Builder *sb, Node *) {
+unit_t fmt_pat_any(String_Builder *sb, Node *) {
   sb_printf(sb, ".");
+  return unit();
 }
 
-void fmt_pat_string(String_Builder *sb, Node *node) {
+unit_t fmt_pat_string(String_Builder *sb, Node *node) {
   for (char *c = node->string.str; *c != '\0'; c++) {
     if (is_special_char(*c)) {
       sb_printf(sb, "\\%c", *c);
@@ -983,38 +993,45 @@ void fmt_pat_string(String_Builder *sb, Node *node) {
       sb_printf(sb, "%c", *c);
     }
   }
+  return unit();
 }
 
-void fmt_pat_oneof(String_Builder *sb, Node *node) {
+unit_t fmt_pat_oneof(String_Builder *sb, Node *node) {
   sb_printf(sb, "[%s]", node->oneof.chars);
+  return unit();
 }
 
-void fmt_pat_range(String_Builder *sb, Node *node) {
+unit_t fmt_pat_range(String_Builder *sb, Node *node) {
   sb_printf(sb, "[%c-%c]", node->range.from, node->range.to);
+  return unit();
 }
 
-void fmt_pat_some(String_Builder *sb, Node *node) {
+unit_t fmt_pat_some(String_Builder *sb, Node *node) {
   sb_printf(sb, "(");
   fmt_pat_rec(sb, node->some.node);
   sb_printf(sb, ")+");
+  return unit();
 }
 
-void fmt_pat_many(String_Builder *sb, Node *node) {
+unit_t fmt_pat_many(String_Builder *sb, Node *node) {
   sb_printf(sb, "(");
   fmt_pat_rec(sb, node->many.node);
   sb_printf(sb, ")*");
+  return unit();
 }
 
-void fmt_pat_opt(String_Builder *sb, Node *node) {
+unit_t fmt_pat_opt(String_Builder *sb, Node *node) {
   sb_printf(sb, "(");
   fmt_pat_rec(sb, node->opt.node);
   sb_printf(sb, ")?");
+  return unit();
 }
 
-void fmt_pat_seq(String_Builder *sb, Node *node) {
+unit_t fmt_pat_seq(String_Builder *sb, Node *node) {
   for (auto n = node->seq.nodes; *n != nullptr; n++) {
     fmt_pat_rec(sb, *n);
   }
+  return unit();
 }
 
 bool fmt_pat_alt_ranges(String_Builder *sb, Node *node) {
@@ -1049,9 +1066,9 @@ bool fmt_pat_alt_ranges(String_Builder *sb, Node *node) {
   return true;
 }
 
-void fmt_pat_alt(String_Builder *sb, Node *node) {
+unit_t fmt_pat_alt(String_Builder *sb, Node *node) {
   if (fmt_pat_alt_ranges(sb, node)) {
-    return;
+    return unit();
   }
 
   sb_printf(sb, "(");
@@ -1064,25 +1081,30 @@ void fmt_pat_alt(String_Builder *sb, Node *node) {
     first = false;
   }
   sb_printf(sb, ")");
+  
+  return unit();
 }
 
-void fmt_pat_not(String_Builder *sb, Node *node) {
+unit_t fmt_pat_not(String_Builder *sb, Node *node) {
   sb_printf(sb, "(?!");
   fmt_pat_rec(sb, node->not.node);
   sb_printf(sb, ")");
+  return unit();
 }
 
-void fmt_pat_try(String_Builder *sb, Node *node) {
+unit_t fmt_pat_try(String_Builder *sb, Node *node) {
   sb_printf(sb, "(?=");
   fmt_pat_rec(sb, node->try.node);
   sb_printf(sb, ")");
+  return unit();
 }
 
-void fmt_pat_capture(String_Builder *sb, Node *node) {
+unit_t fmt_pat_capture(String_Builder *sb, Node *node) {
   fmt_pat_rec(sb, node->capture.node);
+  return unit();
 }
 
-void fmt_pat_rec(String_Builder *sb, Node *node) {
+unit_t fmt_pat_rec(String_Builder *sb, Node *node) {
   switch (node->type) {
     case NODE_END:
       return fmt_pat_end(sb, node);
