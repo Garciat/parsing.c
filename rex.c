@@ -43,6 +43,13 @@ void sb_printf(String_Builder *sb, const char *fmt, ...) {
   sb->count += needed;
 }
 
+void sb_undo_char(String_Builder *sb, char c) {
+  if (sb->count > 0 && sb->items[sb->count - 1] == c) {
+    sb->count--;
+    sb->items[sb->count] = '\0';
+  }
+}
+
 // ==============================================================
 // # Node Definitions
 // ==============================================================
@@ -105,9 +112,27 @@ typedef struct Node {
 // # Matching Types
 // ==============================================================
 
+#define FORK_STACK_CAPACITY 8
+
+typedef struct {
+  Node *nodes[FORK_STACK_CAPACITY];
+} Fork_Stack;
+
+Fork_Stack fork_stack_push(Fork_Stack stack, Node *node) {
+  // find last empty slot; do nothing if full
+  for (size_t i = 0; i < FORK_STACK_CAPACITY; i++) {
+    if (stack.nodes[i] == nullptr) {
+      stack.nodes[i] = node;
+      break;
+    }
+  }
+  return stack;
+}
+
 typedef struct {
   String_View sv;
   size_t position;
+  Fork_Stack fork_stack;
 } Match_State;
 
 Match_State state_from_sv(String_View sv) {
@@ -117,6 +142,14 @@ Match_State state_from_sv(String_View sv) {
 Match_State state_advance(Match_State state, size_t n) {
   assert(state.position + n <= state.sv.size);
   return (Match_State){ .sv = state.sv, .position = state.position + n };
+}
+
+Match_State state_fork(Match_State state, Node *node) {
+  return (Match_State){
+    .sv = state.sv,
+    .position = state.position,
+    .fork_stack = fork_stack_push(state.fork_stack, node)
+  };
 }
 
 typedef struct {
@@ -157,6 +190,7 @@ void fmt_result_err(String_Builder *sb, Match_Result result);
 Match_Result match_rec(Match_State state, Node *node);
 
 Match_Result match_end(Match_State state, Node *node) {
+  assert(node->type == NODE_END);
   if (state.position == state.sv.size) {
     return result_ok_empty(state);
   }
@@ -164,6 +198,7 @@ Match_Result match_end(Match_State state, Node *node) {
 }
 
 Match_Result match_any(Match_State state, Node *node) {
+  assert(node->type == NODE_ANY);
   if (state.position < state.sv.size) {
     return result_ok_consumed(state_advance(state, 1));
   }
@@ -172,6 +207,7 @@ Match_Result match_any(Match_State state, Node *node) {
 
 // Consumes prefix on failure
 Match_Result match_string(Match_State state, Node *node) {
+  assert(node->type == NODE_STRING);
   assert(node->string.str != nullptr);
 
   size_t i = 0;
@@ -191,6 +227,7 @@ Match_Result match_string(Match_State state, Node *node) {
 }
 
 Match_Result match_oneof(Match_State state, Node *node) {
+  assert(node->type == NODE_ONEOF);
   assert(node->oneof.chars != nullptr);
 
   if (state.position < state.sv.size) {
@@ -205,6 +242,7 @@ Match_Result match_oneof(Match_State state, Node *node) {
 }
 
 Match_Result match_range(Match_State state, Node *node) {
+  assert(node->type == NODE_RANGE);
   assert(node->range.from <= node->range.to);
 
   if (state.position < state.sv.size &&
@@ -217,49 +255,51 @@ Match_Result match_range(Match_State state, Node *node) {
 }
 
 Match_Result match_many(Match_State state, Node *node) {
+  assert(node->type == NODE_MANY);
   assert(node->many.node != nullptr);
 
-  auto res = result_ok_empty(state);
-
+  auto current_state = state;
   bool consumed = false;
 
   while (true) {
-    res = match_rec(res.state, node->many.node);
+    auto res = match_rec(current_state, node->many.node);
     switch (res.status) {
       case CONSUMED_OK:
+        current_state = res.state;
         consumed = true;
         continue;
       case EMPTY_OK:
+        current_state = res.state;
         continue;
       case CONSUMED_ERROR:
         return res;
       case EMPTY_ERROR:
         if (consumed) {
-          return result_ok_consumed(res.state);
+          return result_ok_consumed(state_fork(res.state, node));
         } else {
-          return result_ok_empty(res.state);
+          return result_ok_empty(state_fork(res.state, node));
         }
     }
   }
 }
 
 Match_Result match_some(Match_State state, Node *node) {
+  assert(node->type == NODE_SOME);
   assert(node->some.node != nullptr);
 
   auto res = match_rec(state, node->some.node);
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
-      break;
+      return match_many(res.state, MANY(node->some.node));
     case CONSUMED_ERROR:
     case EMPTY_ERROR:
       return res;
   }
-
-  return match_many(res.state, MANY(node->some.node));
 }
 
 Match_Result match_opt(Match_State state, Node *node) {
+  assert(node->type == NODE_OPT);
   assert(node->opt.node != nullptr);
 
   auto res = match_rec(state, node->opt.node);
@@ -269,24 +309,26 @@ Match_Result match_opt(Match_State state, Node *node) {
     case CONSUMED_ERROR:
       return res;
     case EMPTY_ERROR:
-      return result_ok_empty(state);
+      return result_ok_empty(state_fork(state, node));
   }
 }
 
 Match_Result match_seq(Match_State state, Node *node) {
+  assert(node->type == NODE_SEQ);
   assert(node->seq.nodes != nullptr);
 
-  auto res = result_ok_empty(state);
-
+  auto current_state = state;
   bool consumed = false;
 
   for (auto n = node->seq.nodes; *n != nullptr; n++) {
-    res = match_rec(res.state, *n);
+    auto res = match_rec(current_state, *n);
     switch (res.status) {
       case CONSUMED_OK:
+        current_state = res.state;
         consumed = true;
         continue;
       case EMPTY_OK:
+        current_state = res.state;
         continue;
       case CONSUMED_ERROR:
         return res;
@@ -299,14 +341,21 @@ Match_Result match_seq(Match_State state, Node *node) {
     }
   }
 
-  return res;
+  if (consumed) {
+    return result_ok_consumed(current_state);
+  } else {
+    return result_ok_empty(current_state);
+  }
 }
 
 Match_Result match_alt(Match_State state, Node *node) {
+  assert(node->type == NODE_ALT);
   assert(node->alt.nodes != nullptr);
 
+  auto current_state = state;
+
   for (auto n = node->alt.nodes; *n != nullptr; n++) {
-    auto res = match_rec(state, *n);
+    auto res = match_rec(current_state, *n);
     switch (res.status) {
       case CONSUMED_OK:
       case EMPTY_OK:
@@ -314,14 +363,16 @@ Match_Result match_alt(Match_State state, Node *node) {
       case CONSUMED_ERROR:
         return res;
       case EMPTY_ERROR:
+        current_state = state_fork(current_state, node);
         continue;
     }
   }
 
-  return result_err_empty(state, node);
+  return result_err_empty(current_state, node);
 }
 
 Match_Result match_not(Match_State state, Node *node) {
+  assert(node->type == NODE_NOT);
   assert(node->not.node != nullptr);
 
   auto res = match_rec(state, node->not.node);
@@ -338,6 +389,7 @@ Match_Result match_not(Match_State state, Node *node) {
 }
 
 Match_Result match_try(Match_State state, Node *node) {
+  assert(node->type == NODE_TRY);
   assert(node->try.node != nullptr);
 
   auto res = match_rec(state, node->try.node);
@@ -352,6 +404,7 @@ Match_Result match_try(Match_State state, Node *node) {
 }
 
 Match_Result match_capture(Match_State state, Node *node) {
+  assert(node->type == NODE_CAPTURE);
   assert(node->capture.node != nullptr);
   assert(node->capture.output != nullptr);
 
@@ -425,6 +478,14 @@ bool match_cstr(Node *pattern, const char *input) {
 
 void fmt_pat(String_Builder *sb, Node *node);
 
+// useful for debug watches
+char *fmt_pat_alloc(Node *node) {
+  String_Builder sb = {0};
+  fmt_pat(&sb, node);
+  sb_printf(&sb, "\0");
+  return sb.items;
+}
+
 // ==============================================================
 // # URL Matching Example
 // ==============================================================
@@ -474,13 +535,25 @@ bool match_url(const char *input, URL_Match *out, String_Builder *out_expect) {
 // # Tests
 // ==============================================================
 
+void test_all();
 void test_core();
 void test_url();
+void demo();
 
 int main() {
-  test_core();
-  test_url();
+  test_all();
+  demo();
   return 0;
+}
+
+void test_all() {
+  printf("Running all tests...\n");
+
+  test_core();
+  printf("All core tests passed.\n");
+
+  test_url();
+  printf("All URL tests passed.\n");
 }
 
 void test_end() {
@@ -620,78 +693,261 @@ void test_url() {
   assert(match_url_fail_test("ftp://example.com/path"));
 }
 
+void demo() {
+  printf("==============================================================\n");
+  printf("Demo debug output for URL matching failure:\n\n");
+
+  URL_Match url;
+  match_url_test("http://example!/path", &url);
+}
+
 // ==============================================================
 // # Debug Printing
 // ==============================================================
 
-void fmt_expect_rec(String_Builder *sb, Node *node);
+#define EXPECT_LIMIT_CHARS 256
+#define EXPECT_LIMIT_ONEOFS 16
+#define EXPECT_LIMIT_RANGES 16
+#define EXPECT_LIMIT_STRINGS 16
+#define EXPECT_CHAR_EOF '\0'
+#define EXPECT_CHAR_ANY '\1'
+
+typedef struct {
+  bool chars[EXPECT_LIMIT_CHARS];
+  char *oneofs[EXPECT_LIMIT_ONEOFS];
+  size_t oneofs_count;
+  struct Expect_Range { char from, to; } ranges[EXPECT_LIMIT_RANGES];
+  size_t ranges_count;
+  const char *strings[EXPECT_LIMIT_STRINGS];
+  size_t strings_count;
+} Expect_Set;
+
+Expect_Set expect_set_union(Expect_Set a, Expect_Set b) {
+  Expect_Set result = a;
+
+  for (size_t i = 0; i < EXPECT_LIMIT_CHARS; i++) {
+    result.chars[i] = a.chars[i] || b.chars[i];
+  }
+
+  for (size_t i = 0; i < b.oneofs_count; i++) {
+    // dedupe
+    for (size_t j = 0; j < result.oneofs_count; j++) {
+      if (strcmp(result.oneofs[j], b.oneofs[i]) == 0) {
+        goto skip_oneof;
+      }
+    }
+    if (result.oneofs_count < EXPECT_LIMIT_ONEOFS) {
+      result.oneofs[result.oneofs_count++] = b.oneofs[i];
+    }
+skip_oneof:
+  }
+
+  for (size_t i = 0; i < b.ranges_count; i++) {
+    // dedupe
+    for (size_t j = 0; j < result.ranges_count; j++) {
+      if (result.ranges[j].from == b.ranges[i].from &&
+          result.ranges[j].to == b.ranges[i].to) {
+        goto skip_range;
+      }
+    }
+    if (result.ranges_count < EXPECT_LIMIT_RANGES) {
+      result.ranges[result.ranges_count++] = b.ranges[i];
+    }
+skip_range:
+  }
+
+  for (size_t i = 0; i < b.strings_count; i++) {
+    // dedupe
+    for (size_t j = 0; j < result.strings_count; j++) {
+      if (strcmp(result.strings[j], b.strings[i]) == 0) {
+        goto skip_string;
+      }
+    }
+    if (result.strings_count < EXPECT_LIMIT_STRINGS) {
+      result.strings[result.strings_count++] = b.strings[i];
+    }
+skip_string:
+  }
+
+  return result;
+}
+
+Expect_Set expect_set_of_char(char c) {
+  Expect_Set set = {0};
+  set.chars[(unsigned char)c] = true;
+  return set;
+}
+
+Expect_Set expect_set_of_string(const char *str) {
+  if (strlen(str) == 1) {
+    return expect_set_of_char(str[0]);
+  }
+  Expect_Set set = {0};
+  set.strings[set.strings_count++] = str;
+  return set;
+}
+
+Expect_Set expect_set_of_oneof(const char *chars) {
+  if (strlen(chars) == 1) {
+    return expect_set_of_char(chars[0]);
+  }
+  Expect_Set set = {0};
+  set.oneofs[set.oneofs_count++] = (char *)chars;
+  return set;
+}
+
+Expect_Set expect_set_of_range(char from, char to) {
+  Expect_Set set = {0};
+  set.ranges[set.ranges_count++] = (struct Expect_Range){ from, to };
+  return set;
+}
+
+Expect_Set expect_set_negate(Expect_Set set) {
+  return set; // TODO
+}
+
+void expect_set_fmt(Expect_Set set, String_Builder *sb) {
+  for (size_t i = 0; i < EXPECT_LIMIT_CHARS; i++) {
+    if (set.chars[i]) {
+      sb_printf(sb, "- ");
+      if (i == EXPECT_CHAR_EOF) {
+        sb_printf(sb, "end of input");
+      } else if (i == EXPECT_CHAR_ANY) {
+        sb_printf(sb, "any character");
+      } else {
+        sb_printf(sb, "'%c'", (char)i);
+      }
+      sb_printf(sb, "\n");
+    }
+  }
+
+  for (size_t i = 0; i < set.oneofs_count; i++) {
+    sb_printf(sb, "- one of [%s]\n", set.oneofs[i]);
+  }
+
+  for (size_t i = 0; i < set.ranges_count; i++) {
+    sb_printf(sb, "- range '%c'-'%c'\n", set.ranges[i].from, set.ranges[i].to);
+  }
+
+  for (size_t i = 0; i < set.strings_count; i++) {
+    sb_printf(sb, "- string \"%s\"\n", set.strings[i]);
+  }
+
+  sb_undo_char(sb, '\n');
+}
+
+Expect_Set pat_expect_rec(Node *node);
 
 void fmt_result_err(String_Builder *sb, Match_Result result) {
   assert(result.status == CONSUMED_ERROR || result.status == EMPTY_ERROR);
 
+  sb_printf(sb, "Match failure at character %zu:\n\n", result.state.position);
+
   sb_printf(sb, "%.*s\n", (int)result.state.sv.size, result.state.sv.data);
   sb_printf(sb, "%*s^\n", (int)result.state.position, "");
 
-  sb_printf(sb, "Match failure at character %zu:\nExpected ", result.state.position+1);
-  fmt_expect_rec(sb, result.err.expected);
-}
+  Expect_Set expect = pat_expect_rec(result.err.expected);
 
-void fmt_expect_end(String_Builder *sb, Node *) {
-  sb_printf(sb, "end of input");
-}
-
-void fmt_expect_any(String_Builder *sb, Node *) {
-  sb_printf(sb, "any character");
-}
-
-void fmt_expect_string(String_Builder *sb, Node *node) {
-  sb_printf(sb, "\"%s\"", node->string.str);
-}
-
-void fmt_expect_oneof(String_Builder *sb, Node *node) {
-  sb_printf(sb, "one of characters \"%s\"", node->oneof.chars);
-}
-
-void fmt_expect_range(String_Builder *sb, Node *node) {
-  sb_printf(sb, "character in range '%c'-'%c'", 
-            node->range.from,
-            node->range.to);
-}
-
-void fmt_expect_alt(String_Builder *sb, Node *node) {
-  sb_printf(sb, "one of:\n");
-  for (auto n = node->alt.nodes; *n != nullptr; n++) {
-    sb_printf(sb, "  ");
-    fmt_expect_rec(sb, *n);
-    sb_printf(sb, "\n");
+  for (size_t i = 0; i < FORK_STACK_CAPACITY; i++) {
+    if (result.state.fork_stack.nodes[i] == nullptr) break;
+    expect = expect_set_union(
+      expect,
+      pat_expect_rec(result.state.fork_stack.nodes[i])
+    );
   }
+
+  sb_printf(sb, "Expected:\n");
+  expect_set_fmt(expect, sb);
+  sb_printf(sb, "\n");
 }
 
-void fmt_expect_not(String_Builder *sb, Node *node) {
-  sb_printf(sb, "not ");
-  fmt_expect_rec(sb, node->not.node);
+Expect_Set pat_expect_end(Node *) {
+  return expect_set_of_char(EXPECT_CHAR_EOF);
 }
 
-void fmt_expect_rec(String_Builder *sb, Node *node) {
+Expect_Set pat_expect_any(Node *) {
+  return expect_set_of_char(EXPECT_CHAR_ANY);
+}
+
+Expect_Set pat_expect_string(Node *node) {
+  return expect_set_of_string(node->string.str);
+}
+
+Expect_Set pat_expect_oneof(Node *node) {
+  return expect_set_of_oneof(node->oneof.chars);
+}
+
+Expect_Set pat_expect_range(Node *node) {
+  return expect_set_of_range(node->range.from, node->range.to);
+}
+
+Expect_Set pat_expect_many(Node *node) {
+  return pat_expect_rec(node->many.node);
+}
+
+Expect_Set pat_expect_some(Node *node) {
+  return pat_expect_rec(node->some.node);
+}
+
+Expect_Set pat_expect_opt(Node *node) {
+  return pat_expect_rec(node->opt.node);
+}
+
+Expect_Set pat_expect_seq(Node *node) {
+  assert(node->seq.nodes != nullptr);
+  return pat_expect_rec(node->seq.nodes[0]);
+}
+
+Expect_Set pat_expect_alt(Node *node) {
+  Expect_Set set = {0};
+  for (auto n = node->alt.nodes; *n != nullptr; n++) {
+    set = expect_set_union(set, pat_expect_rec(*n));
+  }
+  return set;
+}
+
+Expect_Set pat_expect_not(Node *node) {
+  return expect_set_negate(pat_expect_rec(node->not.node));
+}
+
+Expect_Set pat_expect_try(Node *node) {
+  return pat_expect_rec(node->try.node);
+}
+
+Expect_Set pat_expect_capture(Node *node) {
+  return pat_expect_rec(node->capture.node);
+}
+
+Expect_Set pat_expect_rec(Node *node) {
   switch (node->type) {
     case NODE_END:
-      return fmt_expect_end(sb, node);
+      return pat_expect_end(node);
     case NODE_ANY:
-      return fmt_expect_any(sb, node);
+      return pat_expect_any(node);
     case NODE_STRING:
-      return fmt_expect_string(sb, node);
+      return pat_expect_string(node);
     case NODE_ONEOF:
-      return fmt_expect_oneof(sb, node);
+      return pat_expect_oneof(node);
     case NODE_RANGE:
-      return fmt_expect_range(sb, node);
+      return pat_expect_range(node);
+    case NODE_SOME:
+      return pat_expect_some(node);
+    case NODE_MANY:
+      return pat_expect_many(node);
+    case NODE_OPT:
+      return pat_expect_opt(node);
+    case NODE_SEQ:
+      return pat_expect_seq(node);
     case NODE_ALT:
-      return fmt_expect_alt(sb, node);
+      return pat_expect_alt(node);
     case NODE_NOT:
-      return fmt_expect_not(sb, node);
-    default:
-      sb_printf(sb, "<complex pattern>");
-      return;
+      return pat_expect_not(node);
+    case NODE_TRY:
+      return pat_expect_try(node);
+    case NODE_CAPTURE:
+      return pat_expect_capture(node);
   }
+  assert(0 && "Unknown node type");
 }
 
 // ==============================================================
@@ -708,7 +964,6 @@ bool is_special_char(char c) {
 void fmt_pat_rec(String_Builder *sb, Node *node);
 
 void fmt_pat(String_Builder *sb, Node *node) {
-  sb_printf(sb, "^");
   fmt_pat_rec(sb, node);
 }
 
@@ -762,7 +1017,43 @@ void fmt_pat_seq(String_Builder *sb, Node *node) {
   }
 }
 
+bool fmt_pat_alt_ranges(String_Builder *sb, Node *node) {
+  for (auto n = node->alt.nodes; *n != nullptr; n++) {
+    if ((*n)->type != NODE_RANGE && (*n)->type != NODE_ONEOF) {
+      return false;
+    }
+  }
+
+  sb_printf(sb, "[");
+  bool first = true;
+  for (auto n = node->alt.nodes; *n != nullptr; n++) {
+    if (!first) {
+      sb_printf(sb, "");
+    }
+    switch ((*n)->type) {
+      case NODE_RANGE:
+        sb_printf(sb, "%c-%c", (*n)->range.from, (*n)->range.to);
+        break;
+      case NODE_ONEOF:
+        for (char *c = (*n)->oneof.chars; *c != '\0'; c++) {
+          sb_printf(sb, "%c", *c);
+        }
+        break;
+      default:
+        assert(0 && "Unexpected node type in alt ranges");
+    }
+    first = false;
+  }
+  sb_printf(sb, "]");
+
+  return true;
+}
+
 void fmt_pat_alt(String_Builder *sb, Node *node) {
+  if (fmt_pat_alt_ranges(sb, node)) {
+    return;
+  }
+
   sb_printf(sb, "(");
   bool first = true;
   for (auto n = node->alt.nodes; *n != nullptr; n++) {
@@ -819,7 +1110,6 @@ void fmt_pat_rec(String_Builder *sb, Node *node) {
       return fmt_pat_try(sb, node);
     case NODE_CAPTURE:
       return fmt_pat_capture(sb, node);
-    default:
-      assert(0 && "Unknown node type");
   }
+  assert(0 && "Unknown node type");
 }
