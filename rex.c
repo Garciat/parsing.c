@@ -141,11 +141,11 @@ Match_Result result_ok_consumed(Match_State state) {
 }
 
 Match_Result result_err_empty(Match_State state, Node *expected) {
-  return (Match_Result){ .status = EMPTY_ERROR, .state = state, .err = { expected } };
+  return (Match_Result){ .status = EMPTY_ERROR, .state = state, .err = { .expected = expected } };
 }
 
 Match_Result result_err_consumed(Match_State state, Node *expected) {
-  return (Match_Result){ .status = CONSUMED_ERROR, .state = state, .err = { expected } };
+  return (Match_Result){ .status = CONSUMED_ERROR, .state = state, .err = { .expected = expected } };
 }
 
 void fmt_result_err(String_Builder *sb, Match_Result result);
