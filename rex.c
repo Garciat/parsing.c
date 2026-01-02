@@ -97,7 +97,7 @@ typedef struct Node {
 #define CAPTURE(output, n) (&(Node){ .type = NODE_CAPTURE, .data.capture = { n, output } })
 
 // ==============================================================
-// # Matching Engine
+// # Matching Types
 // ==============================================================
 
 typedef struct {
@@ -111,13 +111,6 @@ Match_State state_advance(Match_State state, size_t n) {
 }
 
 typedef struct {
-  Node *node;
-  Match_State state;
-} Match_Expect;
-
-void fmt_expect(String_Builder *sb, Match_Expect expect);
-
-typedef struct {
   enum {
     CONSUMED_OK,
     CONSUMED_ERROR,
@@ -125,27 +118,47 @@ typedef struct {
     EMPTY_ERROR
   } status;
   Match_State state;
-  Node *expected;
+  union {
+    struct { Node *expected; } err;
+  };
 } Match_Result;
 
-Match_Expect result_to_expect(Match_Result res) {
-  return (Match_Expect){ .node = res.expected, .state = res.state };
+Match_Result result_ok_empty(Match_State state) {
+  return (Match_Result){ .status = EMPTY_OK, .state = state };
 }
+
+Match_Result result_ok_consumed(Match_State state) {
+  return (Match_Result){ .status = CONSUMED_OK, .state = state };
+}
+
+Match_Result result_err_empty(Match_State state, Node *expected) {
+  return (Match_Result){ .status = EMPTY_ERROR, .state = state, .err = { expected } };
+}
+
+Match_Result result_err_consumed(Match_State state, Node *expected) {
+  return (Match_Result){ .status = CONSUMED_ERROR, .state = state, .err = { expected } };
+}
+
+void fmt_result_err(String_Builder *sb, Match_Result result);
+
+// =============================================================
+// # Matching Functions
+// ==============================================================
 
 Match_Result match_rec(Node *node, Match_State state);
 
 Match_Result match_end(Node *node, Match_State state) {
   if (state.position == state.sv.size) {
-    return (Match_Result){ .status = EMPTY_OK, .state = state };
+    return result_ok_empty(state);
   }
-  return (Match_Result){ .status = EMPTY_ERROR, .state = state, .expected = node };
+  return result_err_empty(state, node);
 }
 
 Match_Result match_any(Node *node, Match_State state) {
   if (state.position < state.sv.size) {
-    return (Match_Result){ .status = CONSUMED_OK, .state = state_advance(state, 1) };
+    return result_ok_consumed(state_advance(state, 1));
   }
-  return (Match_Result){ .status = EMPTY_ERROR, .state = state, .expected = node };
+  return result_err_empty(state, node);
 }
 
 // Consumes prefix on failure
@@ -160,11 +173,11 @@ Match_Result match_string(Node *node, Match_State state) {
   }
 
   if (node->data.string.str[i] == '\0') {
-    return (Match_Result){ .status = CONSUMED_OK, .state = state_advance(state, i) };
+    return result_ok_consumed(state_advance(state, i));
   } else if (i == 0) {
-    return (Match_Result){ .status = EMPTY_ERROR, .state = state, .expected = node };
+    return result_err_empty(state, node);
   } else {
-    return (Match_Result){ .status = CONSUMED_ERROR, .state = state_advance(state, i), .expected = node };
+    return result_err_consumed(state_advance(state, i), node);
   }
 }
 
@@ -179,7 +192,7 @@ Match_Result match_oneof(Node *node, Match_State state) {
     }
   }
 
-  return (Match_Result){ .status = EMPTY_ERROR, .state = state, .expected = node };
+  return result_err_empty(state, node);
 }
 
 Match_Result match_range(Node *node, Match_State state) {
@@ -188,16 +201,16 @@ Match_Result match_range(Node *node, Match_State state) {
   if (state.position < state.sv.size &&
       state.sv.data[state.position] >= node->data.range.from &&
       state.sv.data[state.position] <= node->data.range.to) {
-    return (Match_Result){ .status = CONSUMED_OK, .state = state_advance(state, 1) };
+    return result_ok_consumed(state_advance(state, 1));
   }
   
-  return (Match_Result){ .status = EMPTY_ERROR, .state = state, .expected = node };
+  return result_err_empty(state, node);
 }
 
 Match_Result match_many(Node *node, Match_State state) {
   assert(node->data.many.node != nullptr);
 
-  auto res = (Match_Result){ .status = EMPTY_OK, .state = state };
+  auto res = result_ok_empty(state);
 
   bool consumed = false;
 
@@ -213,9 +226,9 @@ Match_Result match_many(Node *node, Match_State state) {
         return res;
       case EMPTY_ERROR:
         if (consumed) {
-          return (Match_Result){ .status = CONSUMED_OK, .state = res.state };
+          return result_ok_consumed(res.state);
         } else {
-          return (Match_Result){ .status = EMPTY_OK, .state = res.state };
+          return result_ok_empty(res.state);
         }
     }
   }
@@ -247,14 +260,14 @@ Match_Result match_opt(Node *node, Match_State state) {
     case CONSUMED_ERROR:
       return res;
     case EMPTY_ERROR:
-      return (Match_Result){ .status = EMPTY_OK, .state = state };
+      return result_ok_empty(state);
   }
 }
 
 Match_Result match_seq(Node *node, Match_State state) {
   assert(node->data.seq.nodes != nullptr);
 
-  auto res = (Match_Result){ .status = EMPTY_OK, .state = state };
+  auto res = result_ok_empty(state);
 
   bool consumed = false;
 
@@ -270,7 +283,7 @@ Match_Result match_seq(Node *node, Match_State state) {
         return res;
       case EMPTY_ERROR:
         if (consumed) {
-          return (Match_Result){ .status = CONSUMED_ERROR, .state = res.state, .expected = res.expected };
+          return result_err_consumed(res.state, res.err.expected);
         } else {
           return res;
         }
@@ -296,7 +309,7 @@ Match_Result match_alt(Node *node, Match_State state) {
     }
   }
 
-  return (Match_Result){ .status = EMPTY_ERROR, .state = state, .expected = node };
+  return result_err_empty(state, node);
 }
 
 Match_Result match_not(Node *node, Match_State state) {
@@ -305,13 +318,13 @@ Match_Result match_not(Node *node, Match_State state) {
   auto res = match_rec(node->data.not.node, state);
   switch (res.status) {
     case CONSUMED_OK:
-      return (Match_Result){ .status = CONSUMED_ERROR, .state = state, .expected = node };
+      return result_err_consumed(state, node);
     case EMPTY_OK:
-      return (Match_Result){ .status = EMPTY_ERROR, .state = state, .expected = node };
+      return result_err_empty(state, node);
     case CONSUMED_ERROR:
-      return (Match_Result){ .status = CONSUMED_OK, .state = state };
+      return result_ok_consumed(state);
     case EMPTY_ERROR:
-      return (Match_Result){ .status = EMPTY_OK, .state = state };
+      return result_ok_empty(state);
   }
 }
 
@@ -325,7 +338,7 @@ Match_Result match_try(Node *node, Match_State state) {
       return res;
     case CONSUMED_ERROR:
     case EMPTY_ERROR:
-      return (Match_Result){ .status = EMPTY_ERROR, .state = state, .expected = res.expected };
+      return result_err_empty(state, res.err.expected);
   }
 }
 
@@ -390,7 +403,7 @@ bool match(Node *pattern, String_View input, String_Builder *out_expect) {
     case CONSUMED_ERROR:
     case EMPTY_ERROR: {
       if (out_expect != nullptr) {
-        fmt_expect(out_expect, result_to_expect(res));
+        fmt_result_err(out_expect, res);
       }
       return false;
     }
@@ -602,68 +615,70 @@ void test_url() {
 // # Debug Printing
 // ==============================================================
 
-void fmt_expect_rec(String_Builder *sb, Match_Expect expect);
+void fmt_expect_rec(String_Builder *sb, Node *node);
 
-void fmt_expect(String_Builder *sb, Match_Expect expect) {
-  sb_printf(sb, "%.*s\n", (int)expect.state.sv.size, expect.state.sv.data);
-  sb_printf(sb, "%*s^\n", (int)expect.state.position, "");
+void fmt_result_err(String_Builder *sb, Match_Result result) {
+  assert(result.status == CONSUMED_ERROR || result.status == EMPTY_ERROR);
 
-  sb_printf(sb, "Match failure at character %zu:\nExpected ", expect.state.position+1);
-  fmt_expect_rec(sb, expect);
+  sb_printf(sb, "%.*s\n", (int)result.state.sv.size, result.state.sv.data);
+  sb_printf(sb, "%*s^\n", (int)result.state.position, "");
+
+  sb_printf(sb, "Match failure at character %zu:\nExpected ", result.state.position+1);
+  fmt_expect_rec(sb, result.err.expected);
 }
 
-void fmt_expect_end(String_Builder *sb, Match_Expect) {
+void fmt_expect_end(String_Builder *sb, Node *) {
   sb_printf(sb, "end of input");
 }
 
-void fmt_expect_any(String_Builder *sb, Match_Expect) {
+void fmt_expect_any(String_Builder *sb, Node *) {
   sb_printf(sb, "any character");
 }
 
-void fmt_expect_string(String_Builder *sb, Match_Expect expect) {
-  sb_printf(sb, "\"%s\"", expect.node->data.string.str);
+void fmt_expect_string(String_Builder *sb, Node *node) {
+  sb_printf(sb, "\"%s\"", node->data.string.str);
 }
 
-void fmt_expect_oneof(String_Builder *sb, Match_Expect expect) {
-  sb_printf(sb, "one of characters \"%s\"", expect.node->data.oneof.chars);
+void fmt_expect_oneof(String_Builder *sb, Node *node) {
+  sb_printf(sb, "one of characters \"%s\"", node->data.oneof.chars);
 }
 
-void fmt_expect_range(String_Builder *sb, Match_Expect expect) {
+void fmt_expect_range(String_Builder *sb, Node *node) {
   sb_printf(sb, "character in range '%c'-'%c'", 
-            expect.node->data.range.from,
-            expect.node->data.range.to);
+            node->data.range.from,
+            node->data.range.to);
 }
 
-void fmt_expect_alt(String_Builder *sb, Match_Expect expect) {
+void fmt_expect_alt(String_Builder *sb, Node *node) {
   sb_printf(sb, "one of:\n");
-  for (auto n = expect.node->data.alt.nodes; *n != nullptr; n++) {
+  for (auto n = node->data.alt.nodes; *n != nullptr; n++) {
     sb_printf(sb, "  ");
-    fmt_expect_rec(sb, (Match_Expect){ .node = *n });
+    fmt_expect_rec(sb, *n);
     sb_printf(sb, "\n");
   }
 }
 
-void fmt_expect_not(String_Builder *sb, Match_Expect expect) {
+void fmt_expect_not(String_Builder *sb, Node *node) {
   sb_printf(sb, "not ");
-  fmt_expect_rec(sb, (Match_Expect){ .node = expect.node->data.not.node });
+  fmt_expect_rec(sb, node->data.not.node);
 }
 
-void fmt_expect_rec(String_Builder *sb, Match_Expect expect) {
-  switch (expect.node->type) {
+void fmt_expect_rec(String_Builder *sb, Node *node) {
+  switch (node->type) {
     case NODE_END:
-      return fmt_expect_end(sb, expect);
+      return fmt_expect_end(sb, node);
     case NODE_ANY:
-      return fmt_expect_any(sb, expect);
+      return fmt_expect_any(sb, node);
     case NODE_STRING:
-      return fmt_expect_string(sb, expect);
+      return fmt_expect_string(sb, node);
     case NODE_ONEOF:
-      return fmt_expect_oneof(sb, expect);
+      return fmt_expect_oneof(sb, node);
     case NODE_RANGE:
-      return fmt_expect_range(sb, expect);
+      return fmt_expect_range(sb, node);
     case NODE_ALT:
-      return fmt_expect_alt(sb, expect);
+      return fmt_expect_alt(sb, node);
     case NODE_NOT:
-      return fmt_expect_not(sb, expect);
+      return fmt_expect_not(sb, node);
     default:
       sb_printf(sb, "<complex pattern>");
       return;
