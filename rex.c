@@ -262,15 +262,12 @@ Match_Result match_range(Match_State state, Node *node) {
   return result_err_empty(state, node);
 }
 
-Match_Result match_many(Match_State state, Node *node) {
-  assert(node->type == NODE_MANY);
-  assert(node->many.node != nullptr);
-
+Match_Result _match_many_impl(Match_State state, Node *parent, Node *child) {
   auto current_state = state;
   bool consumed = false;
 
   while (true) {
-    auto res = match_rec(current_state, node->many.node);
+    auto res = match_rec(current_state, child);
     switch (res.status) {
       case CONSUMED_OK:
         current_state = res.state;
@@ -283,12 +280,19 @@ Match_Result match_many(Match_State state, Node *node) {
         return res;
       case EMPTY_ERROR:
         if (consumed) {
-          return result_ok_consumed(state_fork(res.state, node));
+          return result_ok_consumed(state_fork(res.state, parent));
         } else {
-          return result_ok_empty(state_fork(res.state, node));
+          return result_ok_empty(state_fork(res.state, parent));
         }
     }
   }
+}
+
+Match_Result match_many(Match_State state, Node *node) {
+  assert(node->type == NODE_MANY);
+  assert(node->many.node != nullptr);
+
+  return _match_many_impl(state, node, node->many.node);
 }
 
 Match_Result match_some(Match_State state, Node *node) {
@@ -299,7 +303,7 @@ Match_Result match_some(Match_State state, Node *node) {
   switch (res.status) {
     case CONSUMED_OK:
     case EMPTY_OK:
-      return match_many(res.state, MANY(node->some.node));
+      return _match_many_impl(res.state, node, node->some.node);
     case CONSUMED_ERROR:
     case EMPTY_ERROR:
       return res;
