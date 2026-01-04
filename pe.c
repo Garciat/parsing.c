@@ -117,7 +117,7 @@ typedef struct Parser {
 #define OFFSET(o, p) (&(Parser){ .kind = PARSER_OFFSET, .offset = { .parser = p, .offset = o } })
 #define READ(p) (&(Parser){ .kind = PARSER_READ, .read = { .parser = p } })
 
-#define CAPTURE(d, p) INTO(d, READ(p))
+#define READ_VALUE(d, p) INTO(d, READ(p))
 #define READ_FIELD(t, f, p) OFFSET(offsetof(t, f), READ(p))
 
 #define SKIP(n) (&(Parser){ .kind = PARSER_SKIP, .skip = { .count = n } })
@@ -1149,7 +1149,7 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
     auto parser = SEQ(
       CONST_U2(0x5A4D, U2_LE()),
       SKIP(0x3C - 2),
-      CAPTURE(&pe_header_offset, U4_LE())
+      READ_VALUE(&pe_header_offset, U4_LE())
     );
 
     auto res = parser_run(pstate, parser);
@@ -1163,13 +1163,18 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
   auto coff_header_parser = SEQ(
     SKIP(pe_header_offset),
     CONST_U4(0x50450000, U4_BE()), // "PE\0\0"
-    CAPTURE(&coff_header.machine, U2_LE()),
-    CAPTURE(&coff_header.number_of_sections, U2_LE()),
-    CAPTURE(&coff_header.time_date_stamp, U4_LE()),
-    CAPTURE(&coff_header.pointer_to_symbol_table, U4_LE()),
-    CAPTURE(&coff_header.number_of_symbols, U4_LE()),
-    CAPTURE(&coff_header.size_of_optional_header, U2_LE()),
-    CAPTURE(&coff_header.characteristics, U2_LE())
+    INTO(
+      &coff_header,
+      SEQ(
+        READ_FIELD(COFF_Header, machine, U2_LE()),
+        READ_FIELD(COFF_Header, number_of_sections, U2_LE()),
+        READ_FIELD(COFF_Header, time_date_stamp, U4_LE()),
+        READ_FIELD(COFF_Header, pointer_to_symbol_table, U4_LE()),
+        READ_FIELD(COFF_Header, number_of_symbols, U4_LE()),
+        READ_FIELD(COFF_Header, size_of_optional_header, U2_LE()),
+        READ_FIELD(COFF_Header, characteristics, U2_LE())
+      )
+    )
   );
 
   {
@@ -1184,28 +1189,30 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
 
   {
     auto common = SEQ(
-      CAPTURE(&standard_fields.major_linker_version, BYTES(1)),
-      CAPTURE(&standard_fields.minor_linker_version, BYTES(1)),
-      CAPTURE(&standard_fields.size_of_code, U4_LE()),
-      CAPTURE(&standard_fields.size_of_initialized_data, U4_LE()),
-      CAPTURE(&standard_fields.size_of_uninitialized_data, U4_LE()),
-      CAPTURE(&standard_fields.address_of_entry_point, U4_LE()),
-      CAPTURE(&standard_fields.base_of_code, U4_LE())
+      READ_FIELD(COFF_Standard_Fields, major_linker_version, BYTES(1)),
+      READ_FIELD(COFF_Standard_Fields, minor_linker_version, BYTES(1)),
+      READ_FIELD(COFF_Standard_Fields, size_of_code, U4_LE()),
+      READ_FIELD(COFF_Standard_Fields, size_of_initialized_data, U4_LE()),
+      READ_FIELD(COFF_Standard_Fields, size_of_uninitialized_data, U4_LE()),
+      READ_FIELD(COFF_Standard_Fields, address_of_entry_point, U4_LE()),
+      READ_FIELD(COFF_Standard_Fields, base_of_code, U4_LE())
     );
 
-    auto parser = ALT(
-      SEQ(
-        CAPTURE(&standard_fields.magic, CONST_U2(COFF_MAGIC_PE32, U2_LE())),
-        common,
-        // PE32 has BaseOfData
-        CAPTURE(&standard_fields.base_of_data, U4_LE())
-      ),
-      SEQ(
-        CAPTURE(&standard_fields.magic, CONST_U2(COFF_MAGIC_PE32P, U2_LE())),
-        common
+    auto parser = INTO(
+      &standard_fields,
+      ALT(
+        SEQ(
+          READ_FIELD(COFF_Standard_Fields, magic, CONST_U2(COFF_MAGIC_PE32, U2_LE())),
+          common,
+          READ_FIELD(COFF_Standard_Fields, base_of_data, U4_LE())
+        ),
+        SEQ(
+          READ_FIELD(COFF_Standard_Fields, magic, CONST_U2(COFF_MAGIC_PE32P, U2_LE())),
+          common
+        )
       )
     );
-    
+
     auto res = parser_run(pstate, parser);
     if (!result_handle(res, out_error)) {
       return false;
@@ -1220,28 +1227,31 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
     // Parse PE32 Windows-Specific Fields
     auto fields = (COFF_Windows_Fields_PE32){0};
 
-    auto parser = SEQ(
-      CAPTURE(&fields.image_base, U4_LE()),
-      CAPTURE(&fields.section_alignment, U4_LE()),
-      CAPTURE(&fields.file_alignment, U4_LE()),
-      CAPTURE(&fields.major_operating_system_version, U2_LE()),
-      CAPTURE(&fields.minor_operating_system_version, U2_LE()),
-      CAPTURE(&fields.major_image_version, U2_LE()),
-      CAPTURE(&fields.minor_image_version, U2_LE()),
-      CAPTURE(&fields.major_subsystem_version, U2_LE()),
-      CAPTURE(&fields.minor_subsystem_version, U2_LE()),
-      CAPTURE(&fields.win32_version_value, U4_LE()),
-      CAPTURE(&fields.size_of_image, U4_LE()),
-      CAPTURE(&fields.size_of_headers, U4_LE()),
-      CAPTURE(&fields.check_sum, U4_LE()),
-      CAPTURE(&fields.subsystem, U2_LE()),
-      CAPTURE(&fields.dll_characteristics, U2_LE()),
-      CAPTURE(&fields.size_of_stack_reserve, U4_LE()),
-      CAPTURE(&fields.size_of_stack_commit, U4_LE()),
-      CAPTURE(&fields.size_of_heap_reserve, U4_LE()),
-      CAPTURE(&fields.size_of_heap_commit, U4_LE()),
-      CAPTURE(&fields.loader_flags, U4_LE()),
-      CAPTURE(&fields.number_of_rva_and_sizes, U4_LE())
+    auto parser = INTO(
+      &fields,
+      SEQ(
+        READ_FIELD(COFF_Windows_Fields_PE32, image_base, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, section_alignment, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, file_alignment, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, major_operating_system_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, minor_operating_system_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, major_image_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, minor_image_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, major_subsystem_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, minor_subsystem_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, win32_version_value, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, size_of_image, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, size_of_headers, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, check_sum, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, subsystem, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, dll_characteristics, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, size_of_stack_reserve, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, size_of_stack_commit, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, size_of_heap_reserve, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, size_of_heap_commit, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, loader_flags, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32, number_of_rva_and_sizes, U4_LE())
+      )
     );
 
     auto res = parser_run(pstate, parser);
@@ -1255,28 +1265,31 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
     // Parse PE32+ Windows-Specific Fields
     auto fields = (COFF_Windows_Fields_PE32P){0};
 
-    auto parser = SEQ(
-      CAPTURE(&fields.image_base, U8_LE()),
-      CAPTURE(&fields.section_alignment, U4_LE()),
-      CAPTURE(&fields.file_alignment, U4_LE()),
-      CAPTURE(&fields.major_operating_system_version, U2_LE()),
-      CAPTURE(&fields.minor_operating_system_version, U2_LE()),
-      CAPTURE(&fields.major_image_version, U2_LE()),
-      CAPTURE(&fields.minor_image_version, U2_LE()),
-      CAPTURE(&fields.major_subsystem_version, U2_LE()),
-      CAPTURE(&fields.minor_subsystem_version, U2_LE()),
-      CAPTURE(&fields.win32_version_value, U4_LE()),
-      CAPTURE(&fields.size_of_image, U4_LE()),
-      CAPTURE(&fields.size_of_headers, U4_LE()),
-      CAPTURE(&fields.check_sum, U4_LE()),
-      CAPTURE(&fields.subsystem, U2_LE()),
-      CAPTURE(&fields.dll_characteristics, U2_LE()),
-      CAPTURE(&fields.size_of_stack_reserve, U8_LE()),
-      CAPTURE(&fields.size_of_stack_commit, U8_LE()),
-      CAPTURE(&fields.size_of_heap_reserve, U8_LE()),
-      CAPTURE(&fields.size_of_heap_commit, U8_LE()),
-      CAPTURE(&fields.loader_flags, U4_LE()),
-      CAPTURE(&fields.number_of_rva_and_sizes, U4_LE())
+    auto parser = INTO(
+      &fields,
+      SEQ(
+        READ_FIELD(COFF_Windows_Fields_PE32P, image_base, U8_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, section_alignment, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, file_alignment, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, major_operating_system_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, minor_operating_system_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, major_image_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, minor_image_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, major_subsystem_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, minor_subsystem_version, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, win32_version_value, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, size_of_image, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, size_of_headers, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, check_sum, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, subsystem, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, dll_characteristics, U2_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, size_of_stack_reserve, U8_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, size_of_stack_commit, U8_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, size_of_heap_reserve, U8_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, size_of_heap_commit, U8_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, loader_flags, U4_LE()),
+        READ_FIELD(COFF_Windows_Fields_PE32P, number_of_rva_and_sizes, U4_LE())
+      )
     );
 
     auto res = parser_run(pstate, parser);
