@@ -14,6 +14,7 @@ build/pe: build pe.c
 	$(CC) $(CFLAGS) -o build/pe pe.c
 
 .PHONY: test
-test: all resources/Main.dll
+test: all resources/Main.dll resources/pe.out.expected
 	./build/rex
-	./build/pe
+	./build/pe | tee ./build/pe.out
+	diff ./resources/pe.out.expected ./build/pe.out

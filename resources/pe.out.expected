@@ -1,0 +1,95 @@
+Read 4608 bytes from file.
+=== COFF Header ===
+Machine: 0x014C
+Number of Sections: 3
+Time Date Stamp: 2514202038
+Pointer to Symbol Table: 0
+Number of Symbols: 0
+Size of Optional Header: 224
+Characteristics: 0x0022
+
+=== Standard Fields ===
+Magic: 0x010B
+Linker Version: 48.0
+Size of Code: 2048
+Size of Initialized Data: 2048
+Size of Uninitialized Data: 0
+Address of Entry Point: 0x0000275A
+Base of Code: 0x00002000
+Base of Data: 0x00004000
+
+=== Windows-Specific Fields ===
+Image Base: 0x00400000
+Section Alignment: 8192
+File Alignment: 512
+Operating System Version: 4.0
+Image Version: 0.0
+Subsystem Version: 4.0
+Win32 Version Value: 0
+Size of Image: 32768
+Size of Headers: 512
+Check Sum: 0
+Subsystem: 0x0003
+DLL Characteristics: 0x8560
+Size of Stack Reserve: 1048576
+Size of Stack Commit: 4096
+Size of Heap Reserve: 1048576
+Size of Heap Commit: 4096
+Loader Flags: 0
+Number of RVA and Sizes: 16
+
+=== Data Directories ===
+0: RVA = 0x00000000, Size = 0
+1: RVA = 0x00002706, Size = 79
+2: RVA = 0x00004000, Size = 1392
+3: RVA = 0x00000000, Size = 0
+4: RVA = 0x00000000, Size = 0
+5: RVA = 0x00006000, Size = 12
+6: RVA = 0x000025E0, Size = 84
+7: RVA = 0x00000000, Size = 0
+8: RVA = 0x00000000, Size = 0
+9: RVA = 0x00000000, Size = 0
+10: RVA = 0x00000000, Size = 0
+11: RVA = 0x00000000, Size = 0
+12: RVA = 0x00002000, Size = 8
+13: RVA = 0x00000000, Size = 0
+14: RVA = 0x00002008, Size = 72
+15: RVA = 0x00000000, Size = 0
+
+=== Section Headers ===
+
+--- Section 1 ---
+Name: .text
+Virtual Size: 1888
+Virtual Address: 0x00002000
+Size of Raw Data: 2048
+Pointer to Raw Data: 512
+Pointer to Relocations: 0
+Pointer to Line Numbers: 0
+Number of Relocations: 0
+Number of Line Numbers: 0
+Characteristics: 0x60000020
+
+--- Section 2 ---
+Name: .rsrc
+Virtual Size: 1392
+Virtual Address: 0x00004000
+Size of Raw Data: 1536
+Pointer to Raw Data: 2560
+Pointer to Relocations: 0
+Pointer to Line Numbers: 0
+Number of Relocations: 0
+Number of Line Numbers: 0
+Characteristics: 0x40000040
+
+--- Section 3 ---
+Name: .reloc
+Virtual Size: 12
+Virtual Address: 0x00006000
+Size of Raw Data: 512
+Pointer to Raw Data: 4096
+Pointer to Relocations: 0
+Pointer to Line Numbers: 0
+Number of Relocations: 0
+Number of Line Numbers: 0
+Characteristics: 0x42000040
