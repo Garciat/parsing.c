@@ -1042,104 +1042,6 @@ typedef struct {
   Section_Header *section_headers;
 } PE_File;
 
-void print_coff_header(const COFF_Header *header) {
-  printf("Machine: 0x%04X\n", header->machine);
-  printf("Number of Sections: %u\n", header->number_of_sections);
-  printf("Time Date Stamp: %u\n", header->time_date_stamp);
-  printf("Pointer to Symbol Table: %u\n", header->pointer_to_symbol_table);
-  printf("Number of Symbols: %u\n", header->number_of_symbols);
-  printf("Size of Optional Header: %u\n", header->size_of_optional_header);
-  printf("Characteristics: 0x%04X\n", header->characteristics);
-}
-
-void print_coff_standard_fields(const COFF_Standard_Fields *fields) {
-  printf("Magic: 0x%04X\n", fields->magic);
-  printf("Linker Version: %u.%u\n", fields->major_linker_version, fields->minor_linker_version);
-  printf("Size of Code: %u\n", fields->size_of_code);
-  printf("Size of Initialized Data: %u\n", fields->size_of_initialized_data);
-  printf("Size of Uninitialized Data: %u\n", fields->size_of_uninitialized_data);
-  printf("Address of Entry Point: 0x%08X\n", fields->address_of_entry_point);
-  printf("Base of Code: 0x%08X\n", fields->base_of_code);
-  printf("Base of Data: 0x%08X\n", fields->base_of_data);
-}
-
-void print_coff_windows_fields_pe32(const COFF_Windows_Fields_PE32 *fields) {
-  printf("Image Base: 0x%08X\n", fields->image_base);
-  printf("Section Alignment: %u\n", fields->section_alignment);
-  printf("File Alignment: %u\n", fields->file_alignment);
-  printf("Operating System Version: %u.%u\n", fields->major_operating_system_version, fields->minor_operating_system_version);
-  printf("Image Version: %u.%u\n", fields->major_image_version, fields->minor_image_version);
-  printf("Subsystem Version: %u.%u\n", fields->major_subsystem_version, fields->minor_subsystem_version);
-  printf("Win32 Version Value: %u\n", fields->win32_version_value);
-  printf("Size of Image: %u\n", fields->size_of_image);
-  printf("Size of Headers: %u\n", fields->size_of_headers);
-  printf("Check Sum: %u\n", fields->check_sum);
-  printf("Subsystem: 0x%04X\n", fields->subsystem);
-  printf("DLL Characteristics: 0x%04X\n", fields->dll_characteristics);
-  printf("Size of Stack Reserve: %u\n", fields->size_of_stack_reserve);
-  printf("Size of Stack Commit: %u\n", fields->size_of_stack_commit);
-  printf("Size of Heap Reserve: %u\n", fields->size_of_heap_reserve);
-  printf("Size of Heap Commit: %u\n", fields->size_of_heap_commit);
-  printf("Loader Flags: %u\n", fields->loader_flags);
-  printf("Number of RVA and Sizes: %u\n", fields->number_of_rva_and_sizes);
-}
-
-void print_coff_windows_fields_pe32p(const COFF_Windows_Fields_PE32P *fields) {
-  printf("Image Base: 0x%016"PRIu64"\n", fields->image_base);
-  printf("Section Alignment: %u\n", fields->section_alignment);
-  printf("File Alignment: %u\n", fields->file_alignment);
-  printf("Operating System Version: %u.%u\n", fields->major_operating_system_version, fields->minor_operating_system_version);
-  printf("Image Version: %u.%u\n", fields->major_image_version, fields->minor_image_version);
-  printf("Subsystem Version: %u.%u\n", fields->major_subsystem_version, fields->minor_subsystem_version);
-  printf("Win32 Version Value: %u\n", fields->win32_version_value);
-  printf("Size of Image: %u\n", fields->size_of_image);
-  printf("Size of Headers: %u\n", fields->size_of_headers);
-  printf("Check Sum: %u\n", fields->check_sum);
-  printf("Subsystem: 0x%04X\n", fields->subsystem);
-  printf("DLL Characteristics: 0x%04X\n", fields->dll_characteristics);
-  printf("Size of Stack Reserve: %"PRIu64"\n", fields->size_of_stack_reserve);
-  printf("Size of Stack Commit: %"PRIu64"\n", fields->size_of_stack_commit);
-  printf("Size of Heap Reserve: %"PRIu64"\n", fields->size_of_heap_reserve);
-  printf("Size of Heap Commit: %"PRIu64"\n", fields->size_of_heap_commit);
-  printf("Loader Flags: %u\n", fields->loader_flags);
-  printf("Number of RVA and Sizes: %u\n", fields->number_of_rva_and_sizes);
-}
-
-void print_section_header(const Section_Header *section) {
-  printf("Name: %.8s\n", section->name);
-  printf("Virtual Size: %u\n", section->virtual_size);
-  printf("Virtual Address: 0x%08X\n", section->virtual_address);
-  printf("Size of Raw Data: %u\n", section->size_of_raw_data);
-  printf("Pointer to Raw Data: %u\n", section->pointer_to_raw_data);
-  printf("Pointer to Relocations: %u\n", section->pointer_to_relocations);
-  printf("Pointer to Line Numbers: %u\n", section->pointer_to_linenumbers);
-  printf("Number of Relocations: %u\n", section->number_of_relocations);
-  printf("Number of Line Numbers: %u\n", section->number_of_linenumbers);
-  printf("Characteristics: 0x%08X\n", section->characteristics);
-}
-
-void print_pe_file(const PE_File *pe_file) {
-  printf("=== COFF Header ===\n");
-  print_coff_header(&pe_file->coff_header);
-  printf("\n=== Standard Fields ===\n");
-  print_coff_standard_fields(&pe_file->standard_fields);
-  printf("\n=== Windows-Specific Fields ===\n");
-  if (pe_file->standard_fields.magic == COFF_MAGIC_PE32) {
-    print_coff_windows_fields_pe32(&pe_file->windows_fields.pe32);
-  } else if (pe_file->standard_fields.magic == COFF_MAGIC_PE32P) {
-    print_coff_windows_fields_pe32p(&pe_file->windows_fields.pe32p);
-  }
-  printf("\n=== Data Directories ===\n");
-  for (size_t i = 0; i < 16; i++) {
-    printf("%zu: RVA = 0x%08X, Size = %u\n", i, pe_file->data_directories[i].virtual_address, pe_file->data_directories[i].size);
-  }
-  printf("\n=== Section Headers ===\n");
-  for (size_t i = 0; i < pe_file->coff_header.number_of_sections; i++) {
-    printf("\n--- Section %zu ---\n", i + 1);
-    print_section_header(&pe_file->section_headers[i]);
-  }
-}
-
 bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error) {
   auto pstate = bb_to_parser_state(*bb);
 
@@ -1160,25 +1062,25 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
 
   auto coff_header = (COFF_Header){0};
 
-  auto coff_header_parser = SEQ(
-    SKIP(pe_header_offset),
-    CONST_U4(0x50450000, U4_BE()), // "PE\0\0"
-    INTO(
-      &coff_header,
-      SEQ(
-        READ_FIELD(COFF_Header, machine, U2_LE()),
-        READ_FIELD(COFF_Header, number_of_sections, U2_LE()),
-        READ_FIELD(COFF_Header, time_date_stamp, U4_LE()),
-        READ_FIELD(COFF_Header, pointer_to_symbol_table, U4_LE()),
-        READ_FIELD(COFF_Header, number_of_symbols, U4_LE()),
-        READ_FIELD(COFF_Header, size_of_optional_header, U2_LE()),
-        READ_FIELD(COFF_Header, characteristics, U2_LE())
-      )
-    )
-  );
-
   {
-    auto res = parser_run(bb_to_parser_state(*bb), coff_header_parser);
+    auto parser = SEQ(
+      SKIP(pe_header_offset),
+      CONST_U4(0x50450000, U4_BE()), // "PE\0\0"
+      INTO(
+        &coff_header,
+        SEQ(
+          READ_FIELD(COFF_Header, machine, U2_LE()),
+          READ_FIELD(COFF_Header, number_of_sections, U2_LE()),
+          READ_FIELD(COFF_Header, time_date_stamp, U4_LE()),
+          READ_FIELD(COFF_Header, pointer_to_symbol_table, U4_LE()),
+          READ_FIELD(COFF_Header, number_of_symbols, U4_LE()),
+          READ_FIELD(COFF_Header, size_of_optional_header, U2_LE()),
+          READ_FIELD(COFF_Header, characteristics, U2_LE())
+        )
+      )
+    );
+    
+    auto res = parser_run(bb_to_parser_state(*bb), parser);
     if (!result_handle(res, out_error)) {
       return false;
     }
@@ -1378,6 +1280,8 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
 
 // ==============================================================
 
+void print_pe_file(const PE_File *);
+
 int main() {
   Byte_Buffer bb = {0};
   String_Builder error = {0};
@@ -1397,3 +1301,103 @@ int main() {
 
   return 0;
 }
+
+
+void print_coff_header(const COFF_Header *header) {
+  printf("Machine: 0x%04X\n", header->machine);
+  printf("Number of Sections: %u\n", header->number_of_sections);
+  printf("Time Date Stamp: %u\n", header->time_date_stamp);
+  printf("Pointer to Symbol Table: %u\n", header->pointer_to_symbol_table);
+  printf("Number of Symbols: %u\n", header->number_of_symbols);
+  printf("Size of Optional Header: %u\n", header->size_of_optional_header);
+  printf("Characteristics: 0x%04X\n", header->characteristics);
+}
+
+void print_coff_standard_fields(const COFF_Standard_Fields *fields) {
+  printf("Magic: 0x%04X\n", fields->magic);
+  printf("Linker Version: %u.%u\n", fields->major_linker_version, fields->minor_linker_version);
+  printf("Size of Code: %u\n", fields->size_of_code);
+  printf("Size of Initialized Data: %u\n", fields->size_of_initialized_data);
+  printf("Size of Uninitialized Data: %u\n", fields->size_of_uninitialized_data);
+  printf("Address of Entry Point: 0x%08X\n", fields->address_of_entry_point);
+  printf("Base of Code: 0x%08X\n", fields->base_of_code);
+  printf("Base of Data: 0x%08X\n", fields->base_of_data);
+}
+
+void print_coff_windows_fields_pe32(const COFF_Windows_Fields_PE32 *fields) {
+  printf("Image Base: 0x%08X\n", fields->image_base);
+  printf("Section Alignment: %u\n", fields->section_alignment);
+  printf("File Alignment: %u\n", fields->file_alignment);
+  printf("Operating System Version: %u.%u\n", fields->major_operating_system_version, fields->minor_operating_system_version);
+  printf("Image Version: %u.%u\n", fields->major_image_version, fields->minor_image_version);
+  printf("Subsystem Version: %u.%u\n", fields->major_subsystem_version, fields->minor_subsystem_version);
+  printf("Win32 Version Value: %u\n", fields->win32_version_value);
+  printf("Size of Image: %u\n", fields->size_of_image);
+  printf("Size of Headers: %u\n", fields->size_of_headers);
+  printf("Check Sum: %u\n", fields->check_sum);
+  printf("Subsystem: 0x%04X\n", fields->subsystem);
+  printf("DLL Characteristics: 0x%04X\n", fields->dll_characteristics);
+  printf("Size of Stack Reserve: %u\n", fields->size_of_stack_reserve);
+  printf("Size of Stack Commit: %u\n", fields->size_of_stack_commit);
+  printf("Size of Heap Reserve: %u\n", fields->size_of_heap_reserve);
+  printf("Size of Heap Commit: %u\n", fields->size_of_heap_commit);
+  printf("Loader Flags: %u\n", fields->loader_flags);
+  printf("Number of RVA and Sizes: %u\n", fields->number_of_rva_and_sizes);
+}
+
+void print_coff_windows_fields_pe32p(const COFF_Windows_Fields_PE32P *fields) {
+  printf("Image Base: 0x%016"PRIu64"\n", fields->image_base);
+  printf("Section Alignment: %u\n", fields->section_alignment);
+  printf("File Alignment: %u\n", fields->file_alignment);
+  printf("Operating System Version: %u.%u\n", fields->major_operating_system_version, fields->minor_operating_system_version);
+  printf("Image Version: %u.%u\n", fields->major_image_version, fields->minor_image_version);
+  printf("Subsystem Version: %u.%u\n", fields->major_subsystem_version, fields->minor_subsystem_version);
+  printf("Win32 Version Value: %u\n", fields->win32_version_value);
+  printf("Size of Image: %u\n", fields->size_of_image);
+  printf("Size of Headers: %u\n", fields->size_of_headers);
+  printf("Check Sum: %u\n", fields->check_sum);
+  printf("Subsystem: 0x%04X\n", fields->subsystem);
+  printf("DLL Characteristics: 0x%04X\n", fields->dll_characteristics);
+  printf("Size of Stack Reserve: %"PRIu64"\n", fields->size_of_stack_reserve);
+  printf("Size of Stack Commit: %"PRIu64"\n", fields->size_of_stack_commit);
+  printf("Size of Heap Reserve: %"PRIu64"\n", fields->size_of_heap_reserve);
+  printf("Size of Heap Commit: %"PRIu64"\n", fields->size_of_heap_commit);
+  printf("Loader Flags: %u\n", fields->loader_flags);
+  printf("Number of RVA and Sizes: %u\n", fields->number_of_rva_and_sizes);
+}
+
+void print_section_header(const Section_Header *section) {
+  printf("Name: %.8s\n", section->name);
+  printf("Virtual Size: %u\n", section->virtual_size);
+  printf("Virtual Address: 0x%08X\n", section->virtual_address);
+  printf("Size of Raw Data: %u\n", section->size_of_raw_data);
+  printf("Pointer to Raw Data: %u\n", section->pointer_to_raw_data);
+  printf("Pointer to Relocations: %u\n", section->pointer_to_relocations);
+  printf("Pointer to Line Numbers: %u\n", section->pointer_to_linenumbers);
+  printf("Number of Relocations: %u\n", section->number_of_relocations);
+  printf("Number of Line Numbers: %u\n", section->number_of_linenumbers);
+  printf("Characteristics: 0x%08X\n", section->characteristics);
+}
+
+void print_pe_file(const PE_File *pe_file) {
+  printf("=== COFF Header ===\n");
+  print_coff_header(&pe_file->coff_header);
+  printf("\n=== Standard Fields ===\n");
+  print_coff_standard_fields(&pe_file->standard_fields);
+  printf("\n=== Windows-Specific Fields ===\n");
+  if (pe_file->standard_fields.magic == COFF_MAGIC_PE32) {
+    print_coff_windows_fields_pe32(&pe_file->windows_fields.pe32);
+  } else if (pe_file->standard_fields.magic == COFF_MAGIC_PE32P) {
+    print_coff_windows_fields_pe32p(&pe_file->windows_fields.pe32p);
+  }
+  printf("\n=== Data Directories ===\n");
+  for (size_t i = 0; i < 16; i++) {
+    printf("%zu: RVA = 0x%08X, Size = %u\n", i, pe_file->data_directories[i].virtual_address, pe_file->data_directories[i].size);
+  }
+  printf("\n=== Section Headers ===\n");
+  for (size_t i = 0; i < pe_file->coff_header.number_of_sections; i++) {
+    printf("\n--- Section %zu ---\n", i + 1);
+    print_section_header(&pe_file->section_headers[i]);
+  }
+}
+
