@@ -66,29 +66,38 @@ unit_t unit() {
 
 typedef struct Parser {
   enum {
+    // Output combinators
+    PARSER_INTO,
+    PARSER_STRIDE,
+    PARSER_OFFSET,
+    PARSER_READ,
+
     // Primitive parsers
     PARSER_SKIP,
+    PARSER_BYTES,
     PARSER_U2,
     PARSER_U4,
     PARSER_U8,
 
-    // Composite parsers
-    PARSER_CAPTURE,
+    // Parser combinators
     PARSER_CONST,
     PARSER_SEQ,
     PARSER_ALT,
-    PARSER_ARRAY,
+    PARSER_REPEAT,
   } kind;
   union {
+    // Output combinators
+    struct { struct Parser *parser; void *dest; } into;
+    struct { struct Parser *parser; size_t stride; } stride;
+    struct { struct Parser *parser; size_t offset; } offset;
+    struct { struct Parser *parser; } read;
+    // Primitive parsers
     struct { size_t count; } skip;
+    struct { size_t count; } bytes;
     struct { int endian; } u2;
     struct { int endian; } u4;
     struct { int endian; } u8;
-    struct {
-      struct Parser *parser;
-      void *output;
-      size_t size;
-    } capture;
+    // Parser combinators
     struct {
       struct Parser *parser;
       union {
@@ -99,9 +108,21 @@ typedef struct Parser {
     } constant;
     struct { struct Parser **parsers; } seq;
     struct { struct Parser **parsers; } alt;
-    struct { struct Parser *parser; size_t count; } array;
+    struct { struct Parser *parser; size_t count; } repeat;
   };
 } Parser;
+
+#define INTO(d, p) (&(Parser){ .kind = PARSER_INTO, .into = { .parser = p, .dest = d } })
+#define STRIDE(s, p) (&(Parser){ .kind = PARSER_STRIDE, .stride = { .parser = p, .stride = s } })
+#define OFFSET(o, p) (&(Parser){ .kind = PARSER_OFFSET, .offset = { .parser = p, .offset = o } })
+#define READ(p) (&(Parser){ .kind = PARSER_READ, .read = { .parser = p } })
+
+#define CAPTURE(d, p) INTO(d, READ(p))
+#define READ_FIELD(t, f, p) OFFSET(offsetof(t, f), READ(p))
+
+#define SKIP(n) (&(Parser){ .kind = PARSER_SKIP, .skip = { .count = n } })
+
+#define BYTES(n) (&(Parser){ .kind = PARSER_BYTES, .bytes = { .count = n } })
 
 #define U2_LE() (&(Parser){ .kind = PARSER_U2, .u2 = { .endian = ENDIAN_LE } })
 #define U2_BE() (&(Parser){ .kind = PARSER_U2, .u2 = { .endian = ENDIAN_BE } })
@@ -110,19 +131,15 @@ typedef struct Parser {
 #define U8_LE() (&(Parser){ .kind = PARSER_U8, .u8 = { .endian = ENDIAN_LE } })
 #define U8_BE() (&(Parser){ .kind = PARSER_U8, .u8 = { .endian = ENDIAN_BE } })
 
-#define SKIP(n) (&(Parser){ .kind = PARSER_SKIP, .skip = { .count = n } })
-
-#define CAPTURE(o, p) (&(Parser){ .kind = PARSER_CAPTURE, .capture = { .parser = p, .output = o, .size = sizeof(*(o)) } })
-#define CAPTURE_N(o, n, p) (&(Parser){ .kind = PARSER_CAPTURE, .capture = { .parser = p, .output = o, .size = n * sizeof(*(o)) } })
-#define CAPTURE_ARRAY(o, p) (&(Parser){ .kind = PARSER_CAPTURE, .capture = { .parser = p, .output = o, .size = sizeof(o) } })
-
 #define CONST_U2(value, p) (&(Parser){ .kind = PARSER_CONST, .constant = { .u2 = value, .parser = p } })
 #define CONST_U4(value, p) (&(Parser){ .kind = PARSER_CONST, .constant = { .u4 = value, .parser = p } })
 #define CONST_U8(value, p) (&(Parser){ .kind = PARSER_CONST, .constant = { .u8 = value, .parser = p } })
 
 #define SEQ(...) (&(Parser){ .kind = PARSER_SEQ, .seq = { (Parser*[]){ __VA_ARGS__, nullptr } } })
 #define ALT(...) (&(Parser){ .kind = PARSER_ALT, .alt = { (Parser*[]){ __VA_ARGS__, nullptr } } })
-#define ARRAY(n, p) (&(Parser){ .kind = PARSER_ARRAY, .array = { .parser = p, .count = n } })
+#define REPEAT(n, p) (&(Parser){ .kind = PARSER_REPEAT, .repeat = { .parser = p, .count = n } })
+
+#define INTO_ARRAY(a, n, p) INTO(a, REPEAT(n, STRIDE(sizeof(*(a)), p)))
 
 // ==============================================================
 
@@ -130,21 +147,57 @@ typedef struct ParserState {
   uint8_t* data;
   size_t count;
   size_t offset;
+
+  void *dest;
 } ParserState;
 
 bool state_has_bytes(ParserState state, size_t count) {
   return state.offset + count <= state.count;
 }
 
-const uint8_t *state_current(ParserState state) {
+uint8_t *state_current(ParserState state) {
   assert(state.offset < state.count);
   return state.data + state.offset;
 }
 
 ParserState state_advance(ParserState state, size_t count) {
   assert(state_has_bytes(state, count));
-  return (ParserState){ .data = state.data, .count = state.count, .offset = state.offset + count };
+  return (ParserState){
+    .data = state.data,
+    .count = state.count,
+    .offset = state.offset + count,
+    .dest = state.dest,
+  };
 }
+
+ParserState state_dest_set(ParserState state, void *dest) {
+  return (ParserState){
+    .data = state.data,
+    .count = state.count,
+    .offset = state.offset,
+    .dest = dest,
+  };
+}
+
+ParserState state_dest_offset(ParserState state, size_t offset) {
+  return (ParserState){
+    .data = state.data,
+    .count = state.count,
+    .offset = state.offset,
+    .dest = (void *)((uintptr_t)state.dest + offset),
+  };
+}
+
+ParserState state_dest_offset_undo(ParserState state, size_t offset) {
+  return (ParserState){
+    .data = state.data,
+    .count = state.count,
+    .offset = state.offset,
+    .dest = (void *)((uintptr_t)state.dest - offset),
+  };
+}
+
+// ==============================================================
 
 typedef struct ParserResult {
   enum {
@@ -158,11 +211,13 @@ typedef struct ParserResult {
     struct { Parser *expected; } error;
     struct {
       enum {
+        RESULT_BYTES,
         RESULT_U2,
         RESULT_U4,
         RESULT_U8,
       } kind;
       union {
+        struct { uint8_t *data; size_t count; } bytes;
         uint16_t u2;
         uint32_t u4;
         uint64_t u8;
@@ -187,12 +242,84 @@ ParserResult result_fail_consumed(ParserState state, Parser *expected) {
   };
 }
 
+ParserResult result_dest_set(ParserResult res, void *dest) {
+  res.state = state_dest_set(res.state, dest);
+  return res;
+}
+
+ParserResult result_offset(ParserResult res, size_t offset) {
+  res.state = state_dest_offset(res.state, offset);
+  return res;
+}
+
+ParserResult result_offset_undo(ParserResult res, size_t offset) {
+  res.state = state_dest_offset_undo(res.state, offset);
+  return res;
+}
+
 // ==============================================================
 
 ParserResult parse_rec(ParserState state, Parser *parser);
 
 ParserResult parser_run(ParserState state, Parser *parser) {
   return parse_rec(state, parser);
+}
+
+ParserResult parse_into(ParserState state, Parser *parser) {
+  assert(parser->kind == PARSER_INTO);
+
+  auto saved = state.dest;
+
+  auto res = parse_rec(state_dest_set(state, parser->into.dest), parser->into.parser);
+
+  return result_dest_set(res, saved);
+}
+
+ParserResult parse_stride(ParserState state, Parser *parser) {
+  assert(parser->kind == PARSER_STRIDE);
+
+  auto res = parse_rec(state, parser->offset.parser);
+
+  switch (res.kind) {
+    case RESULT_CONSUMED_OK:
+    case RESULT_EMPTY_OK:
+      return result_offset(res, parser->stride.stride);
+    case RESULT_CONSUMED_ERROR:
+    case RESULT_EMPTY_ERROR:
+      return res;
+  }
+}
+
+ParserResult parse_offset(ParserState state, Parser *parser) {
+  assert(parser->kind == PARSER_OFFSET);
+
+  auto res = parse_rec(state_dest_offset(state, parser->offset.offset), parser->offset.parser);
+
+  return result_offset_undo(res, parser->offset.offset);
+}
+
+ParserResult parse_read(ParserState state, Parser *parser) {
+  assert(parser->kind == PARSER_READ);
+
+  auto res = parse_rec(state, parser->read.parser);
+  if (res.kind == RESULT_CONSUMED_OK || res.kind == RESULT_EMPTY_OK) {
+    switch (res.ok.kind) {
+      case RESULT_BYTES:
+        memcpy(state.dest, res.ok.bytes.data, res.ok.bytes.count);
+        break;
+      case RESULT_U2:
+        memcpy(state.dest, &res.ok.u2, sizeof(uint16_t));
+        break;
+      case RESULT_U4:
+        memcpy(state.dest, &res.ok.u4, sizeof(uint32_t));
+        break;
+      case RESULT_U8:
+        memcpy(state.dest, &res.ok.u8, sizeof(uint64_t));
+        break;
+    }
+  }
+
+  return res;
 }
 
 ParserResult parse_skip(ParserState state, Parser *parser) {
@@ -205,6 +332,22 @@ ParserResult parse_skip(ParserState state, Parser *parser) {
   return (ParserResult){
     .kind = RESULT_CONSUMED_OK,
     .state = state_advance(state, parser->skip.count)
+  };
+}
+
+ParserResult parse_bytes(ParserState state, Parser *parser) {
+  assert(parser->kind == PARSER_BYTES);
+
+  if (!state_has_bytes(state, parser->bytes.count)) {
+    return result_fail_empty(state, parser);
+  }
+
+  // TODO: consider fail_consumed if we have partial bytes?
+
+  return (ParserResult){
+    .kind = RESULT_CONSUMED_OK,
+    .state = state_advance(state, parser->bytes.count),
+    .ok = { .kind = RESULT_BYTES, .bytes = { .data = state_current(state), .count = parser->bytes.count } }
   };
 }
 
@@ -250,27 +393,6 @@ ParserResult parse_u8(ParserState state, Parser *parser) {
   };
 }
 
-ParserResult parse_capture(ParserState state, Parser *parser) {
-  assert(parser->kind == PARSER_CAPTURE);
-  assert(parser->capture.parser != nullptr);
-  assert(parser->capture.output != nullptr);
-  assert(parser->capture.size > 0);
-
-  auto res = parse_rec(state, parser->capture.parser);
-  switch (res.kind) {
-    case RESULT_CONSUMED_OK:
-    case RESULT_EMPTY_OK: {
-      auto n = res.state.offset - state.offset;
-      assert(n <= parser->capture.size);
-      memcpy(parser->capture.output, state.data + state.offset, n);
-      return res;
-    }
-    case RESULT_CONSUMED_ERROR:
-    case RESULT_EMPTY_ERROR:
-      return res;
-  }
-}
-
 ParserResult parse_const(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_CONST);
 
@@ -279,6 +401,8 @@ ParserResult parse_const(ParserState state, Parser *parser) {
     case RESULT_CONSUMED_OK:
     case RESULT_EMPTY_OK:
       switch (res.ok.kind) {
+        case RESULT_BYTES:
+          assert(0 && "TODO: Unsupported constant parser result type: BYTES");
         case RESULT_U2:
           if (res.ok.u2 == parser->constant.u2) {
             return res;
@@ -372,16 +496,16 @@ ParserResult parse_alt(ParserState state, Parser *parser) {
   return result_fail_empty(state, parser);
 }
 
-ParserResult parse_array(ParserState state, Parser *parser) {
-  assert(parser->kind == PARSER_ARRAY);
-  assert(parser->array.parser != nullptr);
+ParserResult parse_repeat(ParserState state, Parser *parser) {
+  assert(parser->kind == PARSER_REPEAT);
+  assert(parser->repeat.parser != nullptr);
 
   auto res = (ParserResult){ .kind = RESULT_EMPTY_OK, .state = state };
 
   bool consumed = false;
 
-  for (size_t i = 0; i < parser->array.count; i++) {
-    res = parse_rec(res.state, parser->array.parser);
+  for (size_t i = 0; i < parser->repeat.count; i++) {
+    res = parse_rec(res.state, parser->repeat.parser);
     switch (res.kind) {
       case RESULT_CONSUMED_OK:
         consumed = true;
@@ -397,7 +521,7 @@ ParserResult parse_array(ParserState state, Parser *parser) {
           return res;
         }
     }
-    assert(0 && "Unexpected result kind in ARRAY parser");
+    assert(0 && "Unexpected result kind in REPEAT parser");
   }
 
   return res;
@@ -405,24 +529,32 @@ ParserResult parse_array(ParserState state, Parser *parser) {
 
 ParserResult parse_rec(ParserState state, Parser *parser) {
   switch (parser->kind) {
+    case PARSER_INTO:
+      return parse_into(state, parser);
+    case PARSER_STRIDE:
+      return parse_stride(state, parser);
+    case PARSER_OFFSET:
+      return parse_offset(state, parser);
+    case PARSER_READ:
+      return parse_read(state, parser);
     case PARSER_SKIP:
       return parse_skip(state, parser);
+    case PARSER_BYTES:
+      return parse_bytes(state, parser);
     case PARSER_U2:
       return parse_u2(state, parser);
     case PARSER_U4:
       return parse_u4(state, parser);
     case PARSER_U8:
       return parse_u8(state, parser);
-    case PARSER_CAPTURE:
-      return parse_capture(state, parser);
     case PARSER_CONST:
       return parse_const(state, parser);
     case PARSER_SEQ:
       return parse_seq(state, parser);
     case PARSER_ALT:
       return parse_alt(state, parser);
-    case PARSER_ARRAY:
-      return parse_array(state, parser);
+    case PARSER_REPEAT:
+      return parse_repeat(state, parser);
   }
   assert(0 && "Unknown parser kind");
 }
@@ -458,9 +590,34 @@ void sb_printf(String_Builder *sb, const char *fmt, ...) {
 
 size_t parser_min_size(Parser *parser);
 
+size_t parser_min_size_into(Parser *parser) {
+  assert(parser->kind == PARSER_INTO);
+  return parser_min_size(parser->into.parser);
+}
+
+size_t parser_min_size_stride(Parser *parser) {
+  assert(parser->kind == PARSER_STRIDE);
+  return parser_min_size(parser->stride.parser);
+}
+
+size_t parser_min_size_offset(Parser *parser) {
+  assert(parser->kind == PARSER_OFFSET);
+  return parser_min_size(parser->offset.parser);
+}
+
+size_t parser_min_size_read(Parser *parser) {
+  assert(parser->kind == PARSER_READ);
+  return parser_min_size(parser->read.parser);
+}
+
 size_t parser_min_size_skip(Parser *parser) {
   assert(parser->kind == PARSER_SKIP);
   return parser->skip.count;
+}
+
+size_t parser_min_size_bytes(Parser *parser) {
+  assert(parser->kind == PARSER_BYTES);
+  return parser->bytes.count;
 }
 
 size_t parser_min_size_u2(Parser *parser) {
@@ -476,11 +633,6 @@ size_t parser_min_size_u4(Parser *parser) {
 size_t parser_min_size_u8(Parser *parser) {
   assert(parser->kind == PARSER_U8);
   return 8;
-}
-
-size_t parser_min_size_capture(Parser *parser) {
-  assert(parser->kind == PARSER_CAPTURE);
-  return parser_min_size(parser->capture.parser);
 }
 
 size_t parser_min_size_const(Parser *parser) {
@@ -509,31 +661,39 @@ size_t parser_min_size_alt(Parser *parser) {
   return min_size;
 }
 
-size_t parser_min_size_array(Parser *parser) {
-  assert(parser->kind == PARSER_ARRAY);
-  return parser->array.count * parser_min_size(parser->array.parser);
+size_t parser_min_size_repeat(Parser *parser) {
+  assert(parser->kind == PARSER_REPEAT);
+  return parser->repeat.count * parser_min_size(parser->repeat.parser);
 }
 
 size_t parser_min_size(Parser *parser) {
   switch (parser->kind) {
+    case PARSER_INTO:
+      return parser_min_size_into(parser);
+    case PARSER_STRIDE:
+      return parser_min_size_stride(parser);
+    case PARSER_OFFSET:
+      return parser_min_size_offset(parser);
+    case PARSER_READ:
+      return parser_min_size_read(parser);
     case PARSER_SKIP:
       return parser_min_size_skip(parser);
+    case PARSER_BYTES:
+      return parser_min_size_bytes(parser);
     case PARSER_U2:
       return parser_min_size_u2(parser);
     case PARSER_U4:
       return parser_min_size_u4(parser);
     case PARSER_U8:
       return parser_min_size_u8(parser);
-    case PARSER_CAPTURE:
-      return parser_min_size_capture(parser);
     case PARSER_CONST:
       return parser_min_size_const(parser);
     case PARSER_SEQ:
       return parser_min_size_seq(parser);
     case PARSER_ALT: 
       return parser_min_size_alt(parser);
-    case PARSER_ARRAY:
-      return parser_min_size_array(parser);
+    case PARSER_REPEAT:
+      return parser_min_size_repeat(parser);
   }
   assert(0 && "Unknown parser kind");
 }
@@ -565,8 +725,41 @@ void fmt_parser_error(String_Builder *sb, ParserResult res) {
   sb_printf(sb, "\n");
 }
 
+unit_t fmt_parser_into(String_Builder *sb, Parser *parser) {
+  sb_printf(sb, "INTO(");
+  fmt_parser_rec(sb, parser->into.parser);
+  sb_printf(sb, ")");
+  return unit();
+}
+
+unit_t fmt_parser_stride(String_Builder *sb, Parser *parser) {
+  sb_printf(sb, "STRIDE(%zu, ", parser->stride.stride);
+  fmt_parser_rec(sb, parser->stride.parser);
+  sb_printf(sb, ")");
+  return unit();
+}
+
+unit_t fmt_parser_offset(String_Builder *sb, Parser *parser) {
+  sb_printf(sb, "OFFSET(%zu, ", parser->offset.offset);
+  fmt_parser_rec(sb, parser->offset.parser);
+  sb_printf(sb, ")");
+  return unit();
+}
+
+unit_t fmt_parser_read(String_Builder *sb, Parser *parser) {
+  sb_printf(sb, "READ(");
+  fmt_parser_rec(sb, parser->read.parser);
+  sb_printf(sb, ")");
+  return unit();
+}
+
 unit_t fmt_parser_skip(String_Builder *sb, Parser *parser) {
   sb_printf(sb, "SKIP(%zu)", parser->skip.count);
+  return unit();
+}
+
+unit_t fmt_parser_bytes(String_Builder *sb, Parser *parser) {
+  sb_printf(sb, "BYTES(%zu)", parser->bytes.count);
   return unit();
 }
 
@@ -583,10 +776,6 @@ unit_t fmt_parser_u4(String_Builder *sb, Parser *parser) {
 unit_t fmt_parser_u8(String_Builder *sb, Parser *parser) {
   sb_printf(sb, "U8(%s)", parser->u8.endian == ENDIAN_LE ? "LE" : "BE");
   return unit();
-}
-
-unit_t fmt_parser_capture(String_Builder *sb, Parser *parser) {
-  return fmt_parser_rec(sb, parser->capture.parser);
 }
 
 unit_t fmt_parser_const(String_Builder *sb, Parser *parser) {
@@ -640,33 +829,41 @@ unit_t fmt_parser_alt(String_Builder *sb, Parser *parser) {
   return unit();
 }
 
-unit_t fmt_parser_array(String_Builder *sb, Parser *parser) {
-  sb_printf(sb, "ARRAY(%zu, ", parser->array.count);
-  fmt_parser_rec(sb, parser->array.parser);
+unit_t fmt_parser_repeat(String_Builder *sb, Parser *parser) {
+  sb_printf(sb, "REPEAT(%zu, ", parser->repeat.count);
+  fmt_parser_rec(sb, parser->repeat.parser);
   sb_printf(sb, ")");
   return unit();
 }
 
 unit_t fmt_parser_rec(String_Builder *sb, Parser *parser) {
   switch (parser->kind) {
+    case PARSER_INTO:
+      return fmt_parser_into(sb, parser);
+    case PARSER_STRIDE:
+      return fmt_parser_stride(sb, parser);
+    case PARSER_OFFSET:
+      return fmt_parser_offset(sb, parser);
+    case PARSER_READ:
+      return fmt_parser_read(sb, parser);
     case PARSER_SKIP:
       return fmt_parser_skip(sb, parser);
+    case PARSER_BYTES:
+      return fmt_parser_bytes(sb, parser);
     case PARSER_U2:
       return fmt_parser_u2(sb, parser);
     case PARSER_U4:
       return fmt_parser_u4(sb, parser);
     case PARSER_U8:
       return fmt_parser_u8(sb, parser);
-    case PARSER_CAPTURE:
-      return fmt_parser_capture(sb, parser);
     case PARSER_CONST:
       return fmt_parser_const(sb, parser);
     case PARSER_SEQ:
       return fmt_parser_seq(sb, parser);
     case PARSER_ALT: 
       return fmt_parser_alt(sb, parser);
-    case PARSER_ARRAY:
-      return fmt_parser_array(sb, parser);
+    case PARSER_REPEAT:
+      return fmt_parser_repeat(sb, parser);
   }
   assert(0 && "Unknown parser kind");
 }
@@ -987,8 +1184,8 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
 
   {
     auto common = SEQ(
-      CAPTURE(&standard_fields.major_linker_version, SKIP(1)),
-      CAPTURE(&standard_fields.minor_linker_version, SKIP(1)),
+      CAPTURE(&standard_fields.major_linker_version, BYTES(1)),
+      CAPTURE(&standard_fields.minor_linker_version, BYTES(1)),
       CAPTURE(&standard_fields.size_of_code, U4_LE()),
       CAPTURE(&standard_fields.size_of_initialized_data, U4_LE()),
       CAPTURE(&standard_fields.size_of_uninitialized_data, U4_LE()),
@@ -1108,12 +1305,13 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
   Image_Data_Directory data_directories[16] = {0};
 
   {
-    auto parser = CAPTURE_ARRAY(
+    auto parser = INTO_ARRAY(
       data_directories,
-      ARRAY(data_directories_count, SEQ(
-        U4_LE(), // virtual_address
-        U4_LE()  // size
-      ))
+      data_directories_count,
+      SEQ(
+        READ_FIELD(Image_Data_Directory, virtual_address, U4_LE()),
+        READ_FIELD(Image_Data_Directory, size, U4_LE())
+      )
     );
 
     auto res = parser_run(pstate, parser);
@@ -1127,21 +1325,21 @@ bool parse_pe_file(Byte_Buffer *bb, PE_File *out_file, String_Builder *out_error
   Section_Header *section_headers = malloc(sizeof(Section_Header) * coff_header.number_of_sections);
 
   {
-    auto parser = CAPTURE_N(
+    auto parser = INTO_ARRAY(
       section_headers,
       coff_header.number_of_sections,
-      ARRAY(coff_header.number_of_sections, SEQ(
-        SKIP(8), // name
-        U4_LE(), // virtual_size
-        U4_LE(), // virtual_address
-        U4_LE(), // size_of_raw_data
-        U4_LE(), // pointer_to_raw_data
-        U4_LE(), // pointer_to_relocations
-        U4_LE(), // pointer_to_linenumbers
-        U2_LE(), // number_of_relocations
-        U2_LE(), // number_of_linenumbers
-        U4_LE()  // characteristics
-      ))
+      SEQ(
+        READ_FIELD(Section_Header, name, BYTES(8)),
+        READ_FIELD(Section_Header, virtual_size, U4_LE()),
+        READ_FIELD(Section_Header, virtual_address, U4_LE()),
+        READ_FIELD(Section_Header, size_of_raw_data, U4_LE()),
+        READ_FIELD(Section_Header, pointer_to_raw_data, U4_LE()),
+        READ_FIELD(Section_Header, pointer_to_relocations, U4_LE()),
+        READ_FIELD(Section_Header, pointer_to_linenumbers, U4_LE()),
+        READ_FIELD(Section_Header, number_of_relocations, U2_LE()),
+        READ_FIELD(Section_Header, number_of_linenumbers, U2_LE()),
+        READ_FIELD(Section_Header, characteristics, U4_LE())
+      )
     );
 
     auto res = parser_run(pstate, parser);
