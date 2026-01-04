@@ -278,7 +278,7 @@ ParserResult parse_into(ParserState state, Parser *parser) {
 ParserResult parse_stride(ParserState state, Parser *parser) {
   assert(parser->kind == PARSER_STRIDE);
 
-  auto res = parse_rec(state, parser->offset.parser);
+  auto res = parse_rec(state, parser->stride.parser);
 
   switch (res.kind) {
     case RESULT_CONSUMED_OK:
