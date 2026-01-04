@@ -386,11 +386,11 @@ Match_Result match_not(Match_State state, Node *node) {
   auto res = match_rec(state, node->not.node);
   switch (res.status) {
     case CONSUMED_OK:
-      return result_err_consumed(state, node);
+      return result_err_consumed(res.state, node);
     case EMPTY_OK:
-      return result_err_empty(state, node);
+      return result_err_empty(res.state, node);
     case CONSUMED_ERROR:
-      return result_ok_consumed(state);
+      return result_ok_empty(state);
     case EMPTY_ERROR:
       return result_ok_empty(state);
   }
