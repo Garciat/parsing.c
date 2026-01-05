@@ -112,8 +112,7 @@ Expected:
 
 - Implements parser combinators for parsing structured binary data.
 - Similar overall approach as `rex.c`.
-  - However, additonally defines output combinators to write parsed data directly into structures.
-    - Apparently this is similar to [Pickler Combinators](https://www.microsoft.com/en-us/research/wp-content/uploads/2004/01/picklercombinators.pdf).
+  - Additonally, defines output combinators to write parsed data directly into structures.
 - No allocations, no mutations.
 
 ```c
