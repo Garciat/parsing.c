@@ -117,9 +117,6 @@ typedef struct Parser {
 #define OFFSET(o, p) (&(Parser){ .kind = PARSER_OFFSET, .offset = { .parser = p, .offset = o } })
 #define READ(p) (&(Parser){ .kind = PARSER_READ, .read = { .parser = p } })
 
-#define READ_VALUE(d, p) INTO(d, READ(p))
-#define READ_FIELD(t, f, p) OFFSET(offsetof(t, f), READ(p))
-
 #define SKIP(n) (&(Parser){ .kind = PARSER_SKIP, .skip = { .count = n } })
 
 #define BYTES(n) (&(Parser){ .kind = PARSER_BYTES, .bytes = { .count = n } })
@@ -139,6 +136,8 @@ typedef struct Parser {
 #define ALT(...) (&(Parser){ .kind = PARSER_ALT, .alt = { (Parser*[]){ __VA_ARGS__, nullptr } } })
 #define REPEAT(n, p) (&(Parser){ .kind = PARSER_REPEAT, .repeat = { .parser = p, .count = n } })
 
+#define READ_VALUE(d, p) INTO(d, READ(p))
+#define READ_FIELD(t, f, p) OFFSET(offsetof(t, f), READ(p))
 #define INTO_ARRAY(a, n, p) INTO(a, REPEAT(n, STRIDE(sizeof(*(a)), p)))
 
 // ==============================================================
