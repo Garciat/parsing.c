@@ -4,13 +4,12 @@ CFLAGS = -Wall -Wextra -Werror -pedantic -std=c23 -g
 .PHONY: all
 all: build/rex build/pe
 
-build:
+build/rex: rex.c
 	mkdir -p build
-
-build/rex: build rex.c
 	$(CC) $(CFLAGS) -o build/rex rex.c
 
-build/pe: build pe.c
+build/pe: pe.c
+	mkdir -p build
 	$(CC) $(CFLAGS) -o build/pe pe.c
 
 .PHONY: test
